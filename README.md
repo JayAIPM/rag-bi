@@ -48,8 +48,6 @@
 | multer        | 最新稳定版 | 文件上传处理                                      |
 | cors          | ≥2.8.5     | 跨域请求处理                                      |
 | jsonwebtoken  | 最新稳定版 | JWT 认证                                          |
-| swagger-jsdoc | 最新稳定版 | API 文档生成                                      |
-| swagger-ui-express | 最新稳定版 | API 文档界面                                      |
 | mongoose      | 最新稳定版 | MongoDB ODM，增强数据库操作体验                  |
 
 ### AI 模型层（基于 Ollama）
@@ -76,21 +74,7 @@
 
 ## 📖 API 接口概览
 
-所有接口统一前缀：`/api/v1`，详细接口文档可启动后端服务后访问 `http://localhost:3000/api-docs` 查看 Swagger 文档。
-
-### Apifox 集成
-
-1. **OpenAPI 规范文件**：http://localhost:3000/api/v1/openapi.json
-2. **集成步骤**：
-   - 在 Apifox 中创建一个新的项目
-   - 选择 "导入 API" → "从 URL 导入"
-   - 输入 OpenAPI 规范文件 URL
-   - 设置自动同步频率，保持文档实时更新
-
-3. **优势**：
-   - 自动同步 API 文档，无需人工干预
-   - 提供更丰富的 API 管理功能
-   - 支持 API 测试、Mock 服务、团队协作等
+所有接口统一前缀：`/api/v1`
 
 ### 核心接口列表
 
@@ -122,8 +106,6 @@
 
 ### 当前状态
 - **服务器地址**：http://localhost:3000
-- **API 文档地址**：http://localhost:3000/api-docs
-- **OpenAPI 规范文件**：http://localhost:3000/api/v1/openapi.json
 - **健康检查**：http://localhost:3000/health
 - **数据库状态**：
   - LanceDB：连接成功
@@ -134,7 +116,7 @@
 - [x] 知识库管理功能（创建、查询、更新、删除）
 - [x] 文档上传和处理功能（文件上传，文档记录管理）
 - [x] 对话历史管理（多轮对话，对话历史存储）
-- [x] API 接口开发和 Swagger 文档
+- [x] API 接口开发
 - [x] 本地部署和 Docker 容器化部署方案
 - [x] 数据库初始化（创建管理员、知识库管理员和普通用户）
 
