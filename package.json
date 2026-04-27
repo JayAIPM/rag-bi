@@ -1,0 +1,40 @@
+{
+  "name": "rag-bi",
+  "version": "1.0.0",
+  "description": "本项目为整个 RAG 大项目的后端服务部分，不涉及前端，不涉及 AI 模型层。 文档中之所以提到前端和 AI 模型层的功能说明仅为加强对 RAG 项目整体把控。 以上信息非常关键，务必谨记！",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JayAIPM/rag-bi.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/JayAIPM/rag-bi/issues"
+  },
+  "homepage": "https://github.com/JayAIPM/rag-bi#readme",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^4.22.1",
+    "express-async-errors": "^3.1.1",
+    "fs-extra": "^11.3.4",
+    "joi": "^18.1.2",
+    "jsonwebtoken": "^9.0.3",
+    "lancedb": "^0.0.1",
+    "llamaindex": "^0.12.1",
+    "mongoose": "^9.5.0",
+    "multer": "^2.1.1",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
