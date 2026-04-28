@@ -5,6 +5,8 @@ require('express-async-errors');
 const { connectDB } = require('./src/config/database');
 const routes = require('./src/routes');
 const { errorHandler, notFoundHandler } = require('./src/middleware/errorHandler');
+const { requestLogger, errorLogger } = require('./src/middleware/logger');
+const logger = require('./src/utils/logger');
 
 // 加载环境变量
 dotenv.config();
@@ -17,6 +19,7 @@ const PORT = process.env.PORT || 3000;
 
 // 注册中间件
 app.use(cors());
+app.use(requestLogger);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -39,6 +42,9 @@ app.use('/api/v1', routes);
 // 注册 404 错误处理中间件
 app.use(notFoundHandler);
 
+// 注册错误日志中间件
+app.use(errorLogger);
+
 // 注册全局错误处理中间件
 app.use(errorHandler);
 
@@ -47,13 +53,14 @@ const startServer = async () => {
   try {
     // 连接数据库
     await connectDB();
+    logger.info('MongoDB 连接成功');
     
     // 启动服务器
     app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
+      logger.info(`Server is running on port ${PORT}`);
     });
   } catch (error) {
-    console.error('Failed to start server:', error);
+    logger.error('Failed to start server:', error);
     process.exit(1);
   }
 };

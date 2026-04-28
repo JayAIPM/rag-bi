@@ -1,23 +1,21 @@
 const User = require('../models/User');
+const Role = require('../models/Role');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { BadRequestError, UnauthorizedError, NotFoundError } = require('../utils/error');
 
 // 登录服务
 exports.login = async (username, password) => {
   // 查找用户
   const user = await User.findOne({ username });
   if (!user) {
-    const error = new Error('Invalid username or password');
-    error.statusCode = 401;
-    throw error;
+    throw new UnauthorizedError('Invalid username or password');
   }
   
   // 验证密码
   const isPasswordValid = await bcrypt.compare(password, user.password);
   if (!isPasswordValid) {
-    const error = new Error('Invalid username or password');
-    error.statusCode = 401;
-    throw error;
+    throw new UnauthorizedError('Invalid username or password');
   }
   
   // 生成 JWT 令牌
@@ -51,9 +49,7 @@ exports.getUserInfo = async (userId) => {
   // 查找用户
   const user = await User.findById(userId).populate('role');
   if (!user) {
-    const error = new Error('User not found');
-    error.statusCode = 404;
-    throw error;
+    throw new NotFoundError('User not found');
   }
   
   // 返回用户信息
@@ -75,9 +71,7 @@ exports.logout = async (userId) => {
   // 查找用户
   const user = await User.findById(userId);
   if (!user) {
-    const error = new Error('User not found');
-    error.statusCode = 404;
-    throw error;
+    throw new NotFoundError('User not found');
   }
   
   // 使当前令牌失效

@@ -19,13 +19,7 @@ exports.login = async (req, res, next) => {
 // 获取用户信息接口
 exports.getUserInfo = async (req, res, next) => {
   // 从请求对象中获取用户信息（由认证中间件添加）
-  const userId = req.user?.userId;
-  
-  if (!userId) {
-    const error = new Error('Unauthorized');
-    error.statusCode = 401;
-    return next(error);
-  }
+  const userId = req.user.userId;
   
   // 调用服务层方法
   const result = await authService.getUserInfo(userId);
@@ -41,13 +35,7 @@ exports.getUserInfo = async (req, res, next) => {
 // 登出接口
 exports.logout = async (req, res, next) => {
   // 从请求对象中获取用户信息（由认证中间件添加）
-  const userId = req.user?.userId;
-  
-  if (!userId) {
-    const error = new Error('Unauthorized');
-    error.statusCode = 401;
-    return next(error);
-  }
+  const userId = req.user.userId;
   
   // 调用服务层方法
   const result = await authService.logout(userId);
