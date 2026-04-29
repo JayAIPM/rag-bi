@@ -30,12 +30,21 @@ const requestLogger = (req, res, next) => {
 const errorLogger = (err, req, res, next) => {
   const { method, originalUrl, ip } = req;
   
-  logger.error(`Error ${err.statusCode || 500} on ${method} ${originalUrl}`, {
-    error: err.message,
-    stack: err.stack,
-    ip,
-    method,
-    url: originalUrl
+  let stack = err.stack;
+  if (stack) {
+    stack = stack.split('\n').filter(line => {
+      return !line.includes('node_modules') && !line.includes('internal/');
+    }).slice(0, 2).join('\n');
+  }
+  
+  logger.error({
+    level: 'error',
+    message: err.message,
+    statusCode: err.statusCode || 500,
+    method: method,
+    url: originalUrl,
+    ip: ip,
+    stack: stack
   });
   
   next(err);

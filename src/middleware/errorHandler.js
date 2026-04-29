@@ -1,19 +1,21 @@
 // 全局错误处理中间件
 const errorHandler = (err, req, res, next) => {
-  console.error('Error:', err);
-  
-  // 定义默认错误响应
   const statusCode = err.statusCode || 500;
-  const message = err.message || 'Internal Server Error';
   
-  // 构建错误响应
+  let message = err.message || 'Internal Server Error';
+  
+  if (err instanceof SyntaxError && err.statusCode === 400) {
+    message = '请求体不是有效的 JSON 格式';
+  } else {
+    message = message.replace(/\\["']/g, "'").replace(/["']/g, '');
+  }
+  
   const errorResponse = {
     code: statusCode,
     msg: message,
     data: null
   };
   
-  // 发送错误响应
   res.status(statusCode).json(errorResponse);
 };
 

@@ -40,6 +40,17 @@ const documentSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // 文档处理状态：pending-待处理、processing-处理中、completed-已完成、failed-失败
+  status: {
+    type: String,
+    enum: ['pending', 'processing', 'completed', 'failed'],
+    default: 'pending'
+  },
+  // 错误信息，处理失败时记录
+  errorMessage: {
+    type: String,
+    default: null
+  },
   // 创建时间
   createdAt: {
     type: Date,
@@ -53,9 +64,8 @@ const documentSchema = new mongoose.Schema({
 });
 
 // 自动更新 updatedAt 字段
-documentSchema.pre('save', function(next) {
+documentSchema.pre('save', function() {
   this.updatedAt = new Date();
-  next();
 });
 
 // 创建文档模型

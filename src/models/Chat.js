@@ -64,9 +64,8 @@ const chatSchema = new mongoose.Schema({
 });
 
 // 自动更新 updatedAt 字段
-chatSchema.pre('save', function(next) {
+chatSchema.pre('save', function() {
   this.updatedAt = new Date();
-  next();
 });
 
 // 创建对话模型
