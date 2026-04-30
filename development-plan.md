@@ -303,17 +303,19 @@ curl -X POST http://localhost:3000/api/v1/auth/logout -H "Authorization: Bearer 
 - [x] 设置合理的块大小和重叠率（800 ± 200 token，重叠率 100-150）
 
 **4.2.4 向量化处理** ⏳
-- [ ] 使用 LlamaIndex.TS 的 OllamaEmbedding 进行文本向量化
-- [ ] 配置本地 nomic-embed-text 模型（默认模型）
-- [ ] 支持 Ollama 服务地址配置（默认 http://localhost:11434）
-- [ ] 处理大文档的分批向量化
-- [ ] 每个分块生成对应的向量，保留 documentId、chunkIndex、start/end 等元数据
+> 备注：由于 LlamaIndex 0.12.1 版本未提供 OllamaEmbedding，实际实现为直接调用 Ollama API
+- [x] 直接调用 Ollama API 进行文本向量化
+- [x] 配置本地 nomic-embed-text 模型（默认模型）
+- [x] 支持 Ollama 服务地址配置（默认 http://localhost:11434）
+- [ ] 处理大文档的分批向量化（可在 4.2.5 完成后回头实现）
+- [x] 每个分块生成对应的向量，保留 documentId、chunkIndex、start/end 等元数据
 
 **4.2.5 向量存储到 LanceDB** ⏳
-- [ ] 初始化 LanceDB 连接
-- [ ] 创建向量表结构
-- [ ] 存储向量数据和关联的文本块
+- [x] 初始化 LanceDB 连接
+- [x] 创建向量表结构
+- [x] 存储向量数据和关联的文本块
 - [ ] 建立索引优化检索性能
+- [x] 修复数据类型推断问题：确保所有字段有正确类型，避免 null 值导致类型推断失败
 
 **4.2.6 重试机制** ⏳
 - [ ] 对可重试错误实现 2-3 次重试
@@ -333,7 +335,7 @@ curl -X POST http://localhost:3000/api/v1/auth/logout -H "Authorization: Bearer 
   - 删除 MongoDB 中的文档记录
   - 删除本地存储的文件
   - 更新知识库的文档数量
-  - （待实现：删除 LanceDB 中的关联向量数据）
+  - 删除 LanceDB 中的关联向量数据
 
 ---
 
@@ -343,12 +345,52 @@ curl -X POST http://localhost:3000/api/v1/auth/logout -H "Authorization: Bearer 
 
 ### 5. 检索引擎模块
 
-- [ ] 实现向量检索功能
-- [ ] 实现 BM25 检索功能
-- [ ] 实现混合检索策略
-- [ ] 实现重排序功能（使用 BGE-Reranker）
-- [ ] 实现智能查询重写
-- [ ] 实现权限前置过滤
+**技术方案说明**：
+- **向量检索**：基于 LanceDB 实现向量相似度检索
+- **BM25 检索**：使用 minisearch 库实现（LlamaIndex.TS 暂无 BM25Retriever）
+  - 集成 nodejieba 中文分词器，支持中文关键词检索
+  - 内存索引，服务启动时从 MongoDB 重建
+  - 支持模糊搜索和知识库过滤
+- **混合检索**：采用 Reciprocal Rank Fusion（RRF，倒数秩融合）策略，无需手动调权重
+- **重排序**：使用本地部署的 BGE-Reranker-v2-m3 模型（通过 Ollama 部署）
+- **智能查询重写**：复用已有的 Qwen-3.5 9B 模型
+- **权限过滤**：检索前验证用户对知识库的访问权限
+
+**实现内容**：
+
+#### 5.1 批次1：基础向量检索 ✅
+- [x] 实现向量检索功能（基于 LanceDB）
+- [x] 支持指定特定知识库检索
+- [x] 支持配置检索返回数量（top-k），默认值：10
+- [x] 测试点：验证向量检索接口能正确返回相似文档块
+
+#### 5.2 批次2：BM25检索 ✅
+- [x] 实现 BM25 检索功能（使用 minisearch 库）
+  - 发现：minisearch 默认不支持中文分词
+  - 解决方案：集成 nodejieba 中文分词器
+  - 实现内容：创建 bm25Service.js，支持内存索引构建和关键词检索
+  - **优化：服务启动时自动从 LanceDB 重建 BM25 索引**
+    - 添加 `getAllChunks()` 方法从 LanceDB 读取所有分块
+    - 添加 `rebuildFromVectorStore()` 方法重建索引
+    - 添加 `deleteByDocumentId()` 方法同步删除索引
+    - 修改 index.js 启动时自动重建索引
+- [x] 测试点：验证关键词检索接口能正确返回匹配文档块
+
+#### 5.3 批次3：混合检索 ⏳
+- [ ] 实现混合检索策略（RRF 倒数秩融合）
+- [ ] 测试点：验证混合检索结果融合正确，效果优于单一检索
+
+#### 5.4 批次4：权限过滤 ⏳
+- [ ] 实现权限前置过滤（验证用户知识库访问权限）
+- [ ] 测试点：验证无权限用户无法检索到未授权知识库内容
+
+#### 5.5 批次5：智能查询重写 ⏳
+- [ ] 实现智能查询重写（复用 Qwen-3.5 9B）
+- [ ] 测试点：验证查询重写能优化检索效果
+
+#### 5.6 批次6：重排序 ⏳
+- [ ] 实现重排序功能（BGE-Reranker-v2-m3 通过 Ollama 本地部署）
+- [ ] 测试点：验证重排序后结果相关性提升
 
 ### 6. 对话管理模块
 

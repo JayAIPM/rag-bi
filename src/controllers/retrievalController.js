@@ -1,0 +1,43 @@
+const retrievalService = require('../services/retrievalService');
+
+const retrievalController = {
+  async search(req, res) {
+    const { query, knowledgeBaseId, limit } = req.query;
+
+    const results = await retrievalService.search(query, {
+      knowledgeBaseId,
+      limit: limit ? parseInt(limit) : 10
+    });
+
+    res.json({
+      code: 0,
+      msg: 'success',
+      data: {
+        query,
+        total: results.length,
+        results
+      }
+    });
+  },
+
+  async bm25Search(req, res) {
+    const { query, knowledgeBaseId, limit } = req.query;
+
+    const results = await retrievalService.bm25Search(query, {
+      knowledgeBaseId,
+      limit: limit ? parseInt(limit) : 10
+    });
+
+    res.json({
+      code: 0,
+      msg: 'success',
+      data: {
+        query,
+        total: results.length,
+        results
+      }
+    });
+  }
+};
+
+module.exports = retrievalController;
