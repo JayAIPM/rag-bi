@@ -15,6 +15,7 @@
 - **multer**：文件上传处理
 - **cors**：跨域请求处理
 - **JWT**：用户认证
+- **express-http-proxy**：HTTP 代理中间件
 
 ### 关键配置说明
 
@@ -22,6 +23,7 @@
 2. **Ollama 服务地址**：默认 `http://localhost:11434`
 3. **分块策略**：块大小 800 ± 200 token，重叠率 100-150 token
 4. **支持文档格式**：PDF、Word、Excel、PPT、TXT、MD、CSV
+5. **LLM 模型**：Ollama 本地部署的 `qwen3.5:4b` 模型
 
 ### 额外依赖
 
@@ -53,6 +55,10 @@
 8. **工具库**：
    - `lodash`：实用工具函数
    - `validator`：输入验证
+
+9. **搜索功能**：
+   - `minisearch`：轻量级全文搜索库
+   - `nodejieba`：中文分词器
 
 ## 开发时间线
 
@@ -270,7 +276,7 @@ curl -X POST http://localhost:3000/api/v1/auth/logout -H "Authorization: Bearer 
   - 立即返回 documentId 和状态（pending）
   - 触发异步文档处理流程（不阻塞响应）
 - [x] 创建文档基础 Service
-  - 创建文档记录：生成唯一文件名，保存到 uploads 目录，创建 Document 记录到 MongoDB，状态设为 pending
+  - 创建文档记录：生成独特文件名，保存到 uploads 目录，创建 Document 记录到 MongoDB，状态设为 pending
   - 错误处理：捕获异常，更新状态为 failed，记录错误信息
 
 **关键技术点**：
@@ -349,7 +355,7 @@ curl -X POST http://localhost:3000/api/v1/auth/logout -H "Authorization: Bearer 
 - **向量检索**：基于 LanceDB 实现向量相似度检索
 - **BM25 检索**：使用 minisearch 库实现（LlamaIndex.TS 暂无 BM25Retriever）
   - 集成 nodejieba 中文分词器，支持中文关键词检索
-  - 内存索引，服务启动时从 MongoDB 重建
+  - 内存索引，服务启动时从 LanceDB 重建
   - 支持模糊搜索和知识库过滤
 - **混合检索**：采用 Reciprocal Rank Fusion（RRF，倒数秩融合）策略，无需手动调权重
 - **重排序**：使用本地部署的 BGE-Reranker-v2-m3 模型（通过 Ollama 部署）
@@ -413,22 +419,109 @@ curl -X POST http://localhost:3000/api/v1/auth/logout -H "Authorization: Bearer 
 ### 6. 对话管理模块
 
 **技术方案说明**：
-- **LLM 调用**：通过 Ollama 本地部署的 Qwen-3.5 9B 模型
-- **上下文构建**：将检索到的文档块拼接为 prompt context
-- **引用溯源**：记录回答引用的文档片段，支持溯源展示
-- **对话历史**：基于 MongoDB 存储对话记录
+
+#### 基础配置
+- **LLM 模型**：Ollama 本地部署的 `qwen3.5:4b` 模型
+- **Ollama 服务地址**：`http://localhost:11434`
+- **接口路径**：`POST /api/v1/chat/ask`
+- **流式响应接口**：`POST /api/v1/chat/ask/stream`
+- **请求参数**：
+  - `query`：用户提问文本（必填）
+  - `knowledgeBaseId`：知识库ID（可选，不传则检索所有知识库）
+
+#### 检索配置
+- **检索方式**：调用混合检索（hybridSearch）
+- **返回数量**：默认返回 5 条结果给 LLM
+- **文档块长度限制**：800 token
+
+#### Prompt 模板设计
+- **角色定位**：知识库助手（简单角色，不复杂化）
+- **约束规则**：
+  1. 只根据提供的参考信息回答，不要编造答案
+  2. 如果参考信息中没有相关信息，请如实告知"暂无相关信息"
+  3. 回答要简洁、准确，引用相关片段
+
+- **引用格式**：两段式结构
+  - 句中标注引用序号（如 [1]、[2]）
+  - 回答末尾附上对应原文片段
+
+- **来源标注**：必须标注，且来源信息要精准可追溯
+
+- **字数限制**：
+  - 默认控制在 250 字以内
+  - 复杂总结类问题不超过 450 字
+
+- **语言要求**：默认以中文回答为主，同时支持根据用户提问的语言自动适配
+
+#### 边界情况处理
+
+**检索结果为空时**：
+- 返回固定话术："暂无相关信息"
+- 严格执行拒答，绝对禁止兜底、禁止使用预训练知识编造内容
+
+**Ollama 服务不可用时**：
+- 返回错误码 500
+- 错误信息："大模型服务暂不可用"
+
+**检索结果冲突时**：
+- 明确优先级规则，透明化披露冲突，禁止模型自行黑箱决断
+- **优先级规则**（按顺序执行）：
+  1. **时间优先**：优先采信发布/更新时间最新的文档内容
+  2. **层级优先**：若发布时间一致，优先采信来源层级更高的文档（如官方正式制度 > 解读材料 > 培训课件）
+  3. **透明披露**：必须在回答中明确标注不同来源的冲突内容，同时说明采信的依据，绝对禁止隐瞒冲突、自行决断
+
+#### Prompt 模板示例
+```
+【系统提示词】
+你是一个专业的知识库问答助手。请根据提供的参考信息回答用户的问题。
+
+【约束规则】
+1. 只根据提供的参考信息回答，不要编造答案
+2. 如果参考信息中没有相关信息，请如实告知"暂无相关信息"
+3. 回答要简洁、准确，在句中标注引用序号[1][2]等
+4. 回答末尾附上对应的原文片段作为引用来源
+5. 字数控制在250字以内（复杂总结类问题不超过450字）
+6. 如果多个来源有冲突，必须明确标注冲突内容并说明采信依据
+
+【参考信息】
+{context}
+
+【用户问题】
+{query}
+
+【回答】
+```
+
+#### 流式响应实现说明
+
+**问题背景**：
+Express 作为代理同时处理请求和响应时，默认会缓冲响应数据，导致流式响应无法实时推送。
+
+**解决方案**：
+使用 Node.js 原生 `http.request` 发起 Ollama 请求，通过 `pipe` 直接将流式响应透传回客户端，绕过 Express 的响应缓冲机制。
+
+**实现要点**：
+- 使用 `http.request` 发起 Ollama API 请求
+- 使用 `ollamaRes.pipe(res)` 直接管道传输流式响应
+- 设置 SSE 相关响应头（Content-Type、Cache-Control、X-Accel-Buffering等）
 
 **实现内容**：
 
-#### 6.1 批次1：基础对话提问接口 ⏳
-- [ ] 创建 chatService.js，实现核心对话逻辑
-  - 调用混合检索获取相关文档
-  - 构建 LLM 输入 prompt
-  - 调用 Ollama API 生成回答
-  - 提取引用信息
-- [ ] 创建 chatController.js，实现对话接口
-- [ ] 创建 chat.js 路由文件
-- [ ] 测试点：验证对话接口能正确调用LLM并返回回答
+#### 6.1 批次1：基础对话提问接口 ✅
+
+**批次A：核心对话逻辑（不含LLM调用）** ✅
+- [x] 创建 chatService.js 基本结构
+- [x] 实现调用混合检索获取文档的逻辑
+- [x] 实现上下文构建（将文档拼接为prompt context）
+- [x] 用测试脚本验证上下文构建的正确性
+- [x] 测试点：验证检索结果能正确获取，上下文能正确构建，Prompt模板格式符合预期
+
+**批次B：完整LLM集成** ✅
+- [x] 实现 Ollama API 调用（chat/completions）
+- [x] 实现引用信息提取
+- [x] 创建 chatController.js 和路由文件
+- [x] **流式响应优化**：使用 http.request + pipe 实现流式响应
+- [x] 测试点：验证 LLM 能正确生成回答，回答格式符合要求（引用、字数限制），边界情况处理正确，curl 测试流式响应正常
 
 #### 6.2 批次2：对话历史管理 ⏳
 - [ ] 实现对话历史存储（基于 Chat 模型）
@@ -443,7 +536,6 @@ curl -X POST http://localhost:3000/api/v1/auth/logout -H "Authorization: Bearer 
 
 #### 6.4 批次4：高级功能（后续迭代） ⏳
 - [ ] 实现多轮对话支持
-- [ ] 实现流式响应
 - [ ] 实现 Query 预处理和拒答逻辑
 
 ### 7. 用户管理模块
@@ -495,7 +587,7 @@ curl -X POST http://localhost:3000/api/v1/auth/logout -H "Authorization: Bearer 
 2. 权限验证
 3. 混合检索（调用已实现的 hybridSearch）
 4. 上下文构建
-5. LLM 生成回答
+5. LLM 生成回答（流式响应）
 6. 引用溯源
 7. 返回结果
 8. 对话历史存储
@@ -610,7 +702,8 @@ curl -X POST http://localhost:3000/api/v1/auth/logout -H "Authorization: Bearer 
 - GET /api/v1/retrieval/hybrid - 混合检索
 
 ### 对话接口
-- POST /api/v1/chat/ask - 发送问题
+- POST /api/v1/chat/ask - 发送问题（非流式）
+- POST /api/v1/chat/ask/stream - 发送问题（流式响应）
 - GET /api/v1/chat/history - 获取对话历史
 - DELETE /api/v1/chat/history/{id} - 删除对话历史
 

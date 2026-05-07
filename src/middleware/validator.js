@@ -1,34 +1,29 @@
 const Joi = require('joi');
 
-// 验证中间件工厂函数
 const validate = (schema) => {
   return (req, res, next) => {
     try {
-      // 合并所有参数源
       const data = {
         ...req.body,
         ...req.params,
         ...req.query
       };
-      
-      // 验证数据
+
       const { error, value } = schema.validate(data, {
-        abortEarly: false, // 收集所有错误
-        allowUnknown: true // 允许未知字段
+        abortEarly: false,
+        allowUnknown: true
       });
-      
+
       if (error) {
-        // 格式化错误信息
         const errorMessage = error.details.map(detail => detail.message).join(', ');
         const validationError = new Error(errorMessage);
         validationError.statusCode = 400;
         return next(validationError);
       }
-      
-      // 将验证后的数据放回请求对象
+
       req.validatedData = value;
       next();
-      
+
     } catch (error) {
       console.error('Validation middleware error:', error);
       next(error);
@@ -36,7 +31,6 @@ const validate = (schema) => {
   };
 };
 
-// 登录验证规则
 const loginSchema = Joi.object({
   username: Joi.string().required().trim().min(3).max(50).messages({
     'string.empty': 'Username is required',
@@ -49,13 +43,10 @@ const loginSchema = Joi.object({
   })
 });
 
-// 获取用户信息验证规则（通过认证中间件验证）
 const userInfoSchema = Joi.object({});
 
-// 登出验证规则（通过认证中间件验证）
 const logoutSchema = Joi.object({});
 
-// 知识库创建验证规则
 const createKnowledgeBaseSchema = Joi.object({
   name: Joi.string().required().trim().min(1).max(100).messages({
     'string.empty': '知识库名称不能为空',
@@ -67,7 +58,6 @@ const createKnowledgeBaseSchema = Joi.object({
   })
 });
 
-// 知识库更新验证规则
 const updateKnowledgeBaseSchema = Joi.object({
   name: Joi.string().trim().min(1).max(100).messages({
     'string.min': '知识库名称至少需要1个字符',
@@ -78,7 +68,6 @@ const updateKnowledgeBaseSchema = Joi.object({
   })
 });
 
-// 知识库查询验证规则
 const queryKnowledgeBaseSchema = Joi.object({
   page: Joi.number().integer().min(1).default(1).messages({
     'number.base': '页码必须是数字',
@@ -162,6 +151,18 @@ const hybridSearchSchema = Joi.object({
   })
 });
 
+const askSchema = Joi.object({
+  query: Joi.string().required().min(1).max(1000).messages({
+    'string.empty': '问题不能为空',
+    'string.min': '问题至少需要1个字符',
+    'string.max': '问题不能超过1000个字符',
+    'any.required': '问题是必填项'
+  }),
+  knowledgeBaseId: Joi.string().trim().messages({
+    'string.base': '知识库ID必须是字符串'
+  })
+});
+
 module.exports = {
   validate,
   loginSchema,
@@ -173,5 +174,6 @@ module.exports = {
   uploadDocumentSchema,
   queryDocumentSchema,
   searchSchema,
-  hybridSearchSchema
+  hybridSearchSchema,
+  askSchema
 };
