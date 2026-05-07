@@ -3,6 +3,57 @@ const embeddingService = require('./embeddingService');
 const vectorStoreService = require('./vectorStoreService');
 const bm25Service = require('./bm25Service');
 
+const rrfFusion = (vectorResults, bm25Results, options = {}) => {
+  const { k = 60 } = options;
+  logger.info(`Performing RRF fusion with k=${k}, vectorResults=${vectorResults.length}, bm25Results=${bm25Results.length}`);
+
+  const scoreMap = new Map();
+
+  // 处理向量检索结果
+  vectorResults.forEach((result, index) => {
+    const chunkId = result.chunkId || result.id;
+    if (!chunkId) return;
+    
+    const rank = index + 1;
+    const score = 1 / (k + rank);
+    const existing = scoreMap.get(chunkId) || { score: 0, result: null };
+    existing.score += score;
+    existing.result = result;
+    existing.sources = existing.sources || [];
+    existing.sources.push('vector');
+    scoreMap.set(chunkId, existing);
+  });
+
+  // 处理BM25检索结果
+  bm25Results.forEach((result, index) => {
+    const chunkId = result.chunkId || result.id;
+    if (!chunkId) return;
+    
+    const rank = index + 1;
+    const score = 1 / (k + rank);
+    const existing = scoreMap.get(chunkId) || { score: 0, result: null };
+    existing.score += score;
+    if (!existing.result) {
+      existing.result = result;
+    }
+    existing.sources = existing.sources || [];
+    existing.sources.push('bm25');
+    scoreMap.set(chunkId, existing);
+  });
+
+  // 转换为数组并排序
+  const fusedResults = Array.from(scoreMap.values())
+    .map(item => ({
+      ...item.result,
+      rrfScore: item.score,
+      sources: item.sources
+    }))
+    .sort((a, b) => b.rrfScore - a.rrfScore);
+
+  logger.info(`RRF fusion completed, ${fusedResults.length} unique results`);
+  return fusedResults;
+};
+
 const retrievalService = {
   async search(query, options = {}) {
     const { knowledgeBaseId, limit = 10 } = options;
@@ -33,6 +84,28 @@ const retrievalService = {
     
     logger.info(`BM25 search found ${results.length} results`);
     return results;
+  },
+
+  async hybridSearch(query, options = {}) {
+    const { knowledgeBaseId, limit = 10, k = 60 } = options;
+    logger.info(`Hybrid searching for query: "${query}", knowledgeBaseId: ${knowledgeBaseId || 'all'}, limit: ${limit}, k: ${k}`);
+
+    // 并行执行向量检索和BM25检索
+    logger.info('Step 1: Executing parallel searches');
+    const [vectorResults, bm25Results] = await Promise.all([
+      this.search(query, { knowledgeBaseId, limit: 20 }),
+      this.bm25Search(query, { knowledgeBaseId, limit: 20 })
+    ]);
+
+    // RRF融合
+    logger.info('Step 2: Performing RRF fusion');
+    const fusedResults = rrfFusion(vectorResults, bm25Results, { k });
+
+    // 取top-k结果
+    const finalResults = fusedResults.slice(0, limit);
+    logger.info(`Hybrid search completed, ${finalResults.length} final results`);
+
+    return finalResults;
   },
 
   getConfig() {

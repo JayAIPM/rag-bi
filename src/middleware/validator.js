@@ -129,6 +129,36 @@ const searchSchema = Joi.object({
     'number.integer': '返回数量必须是整数',
     'number.min': '返回数量最小为1',
     'number.max': '返回数量最大为100'
+  }),
+  k: Joi.number().integer().min(1).max(200).default(60).messages({
+    'number.base': 'RRF k值必须是数字',
+    'number.integer': 'RRF k值必须是整数',
+    'number.min': 'RRF k值最小为1',
+    'number.max': 'RRF k值最大为200'
+  })
+});
+
+const hybridSearchSchema = Joi.object({
+  query: Joi.string().required().min(1).max(1000).messages({
+    'string.empty': '检索查询不能为空',
+    'string.min': '检索查询至少需要1个字符',
+    'string.max': '检索查询不能超过1000个字符',
+    'any.required': '检索查询是必填项'
+  }),
+  knowledgeBaseId: Joi.string().trim().messages({
+    'string.base': '知识库ID必须是字符串'
+  }),
+  limit: Joi.number().integer().min(1).max(100).default(10).messages({
+    'number.base': '返回数量必须是数字',
+    'number.integer': '返回数量必须是整数',
+    'number.min': '返回数量最小为1',
+    'number.max': '返回数量最大为100'
+  }),
+  k: Joi.number().integer().min(1).max(200).default(60).messages({
+    'number.base': 'RRF k值必须是数字',
+    'number.integer': 'RRF k值必须是整数',
+    'number.min': 'RRF k值最小为1',
+    'number.max': 'RRF k值最大为200'
   })
 });
 
@@ -142,5 +172,6 @@ module.exports = {
   queryKnowledgeBaseSchema,
   uploadDocumentSchema,
   queryDocumentSchema,
-  searchSchema
+  searchSchema,
+  hybridSearchSchema
 };

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permission');
-const { validate, searchSchema } = require('../middleware/validator');
+const { validate, searchSchema, hybridSearchSchema } = require('../middleware/validator');
 const retrievalController = require('../controllers/retrievalController');
 
 router.get(
@@ -19,6 +19,14 @@ router.get(
   requirePermission('document:read'),
   validate(searchSchema),
   retrievalController.bm25Search
+);
+
+router.get(
+  '/hybrid',
+  authenticate,
+  requirePermission('document:read'),
+  validate(hybridSearchSchema),
+  retrievalController.hybridSearch
 );
 
 module.exports = router;
