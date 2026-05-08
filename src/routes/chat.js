@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permission');
-const { validate, askSchema } = require('../middleware/validator');
+const { validate, askSchema, queryChatHistorySchema, chatIdSchema } = require('../middleware/validator');
 const chatService = require('../services/chatService');
 const logger = require('../utils/logger');
 
@@ -23,27 +23,41 @@ router.post(
   requirePermission('document:read'),
   validate(askSchema),
   async (req, res) => {
-    const { query, knowledgeBaseId } = req.body;
-    const userId = req.user._id;
+    const chatController = require('../controllers/chatController');
+    await chatController.askStream(req, res);
+  }
+);
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
+router.get(
+  '/history',
+  authenticate,
+  requirePermission('document:read'),
+  validate(queryChatHistorySchema),
+  async (req, res) => {
+    const chatController = require('../controllers/chatController');
+    await chatController.getHistory(req, res);
+  }
+);
 
-    res.flushHeaders();
+router.get(
+  '/:id',
+  authenticate,
+  requirePermission('document:read'),
+  validate(chatIdSchema),
+  async (req, res) => {
+    const chatController = require('../controllers/chatController');
+    await chatController.getById(req, res);
+  }
+);
 
-    try {
-      await chatService.askStream(query, {
-        userId,
-        knowledgeBaseId,
-        onChunk: (data) => res.write(data),
-        onEnd: () => res.end(),
-      });
-    } catch (error) {
-      logger.error('Stream error:', error);
-      res.end();
-    }
+router.delete(
+  '/:id',
+  authenticate,
+  requirePermission('document:read'),
+  validate(chatIdSchema),
+  async (req, res) => {
+    const chatController = require('../controllers/chatController');
+    await chatController.deleteById(req, res);
   }
 );
 

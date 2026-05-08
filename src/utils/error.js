@@ -8,7 +8,6 @@ class AppError extends Error {
     this.errorCode = errorCode;
     this.isOperational = true;
     
-    // 捕获错误堆栈
     Error.captureStackTrace(this, this.constructor);
   }
 }
@@ -44,11 +43,40 @@ class InternalServerError extends AppError {
   }
 }
 
+// LLM 相关错误类
+class LLMTimeoutError extends AppError {
+  constructor(message = 'LLM 请求超时', errorCode = 'LLM_TIMEOUT') {
+    super(message, 504, errorCode);
+  }
+}
+
+class LLMConnectionError extends AppError {
+  constructor(message = 'LLM 服务连接失败', errorCode = 'LLM_CONNECTION_ERROR') {
+    super(message, 503, errorCode);
+  }
+}
+
+class StreamInterruptedError extends AppError {
+  constructor(message = '流式响应中断', errorCode = 'STREAM_INTERRUPTED') {
+    super(message, 499, errorCode);
+  }
+}
+
+class NoRelevantContentError extends AppError {
+  constructor(message = '暂无相关信息', errorCode = 'NO_RELEVANT_CONTENT') {
+    super(message, 200, errorCode);
+  }
+}
+
 module.exports = {
   AppError,
   BadRequestError,
   UnauthorizedError,
   ForbiddenError,
   NotFoundError,
-  InternalServerError
+  InternalServerError,
+  LLMTimeoutError,
+  LLMConnectionError,
+  StreamInterruptedError,
+  NoRelevantContentError,
 };

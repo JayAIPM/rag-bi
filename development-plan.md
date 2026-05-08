@@ -6,144 +6,60 @@
 
 ## 技术栈
 
-- **Node.js**：最新稳定版
+### 核心框架
+- **Node.js**：运行时环境
 - **Express.js**：Web 服务框架
-- **LlamaIndex.TS**：核心 RAG 引擎
+- **mongoose**：MongoDB ODM
+
+### 数据存储
 - **LanceDB**：本地向量数据库
 - **MongoDB**：本地结构化数据存储
-- **mongoose**：MongoDB ODM
+
+### RAG 核心
+- **LlamaIndex.TS**：文档分块处理（SentenceSplitter）
+- **Ollama**：本地 LLM 服务（嵌入模型 + 对话模型）
+
+### 中间件与工具
 - **multer**：文件上传处理
 - **cors**：跨域请求处理
-- **JWT**：用户认证
-- **express-http-proxy**：HTTP 代理中间件
+- **joi**：参数验证
+- **winston**：日志管理
+- **fs-extra**：增强的文件操作
+- **jsonwebtoken**：JWT 认证
+- **bcryptjs**：密码加密
+- **dotenv**：环境变量管理
+- **express-async-errors**：异步错误处理
 
-### 关键配置说明
+### 搜索与检索
+- **minisearch**：BM25 全文搜索
+- **nodejieba**：中文分词器
 
-1. **嵌入模型**：使用 Ollama 本地部署的 `nomic-embed-text` 模型
+### 文档解析
+- **pdf-parse**：PDF 解析 ✅ 已使用
+- **mammoth**：Word 文档解析 ✅ 已使用
+- **xlsx**：Excel 解析 ⏸️ 未使用
+- **pptx-parser**：PPT 解析 ⏸️ 未使用
+- **tesseract.js**：OCR 识别 ⏸️ 未使用
+
+### 关键配置
+
+1. **嵌入模型**：Ollama 本地部署的 `nomic-embed-text` 模型
 2. **Ollama 服务地址**：默认 `http://localhost:11434`
 3. **分块策略**：块大小 800 ± 200 token，重叠率 100-150 token
-4. **支持文档格式**：PDF、Word、Excel、PPT、TXT、MD、CSV
+4. **支持文档格式**：PDF ✅、Word ✅、Excel ⏸️、PPT ⏸️、TXT ✅、MD ✅、CSV ✅
 5. **LLM 模型**：Ollama 本地部署的 `qwen3.5:4b` 模型
-
-### 额外依赖
-
-1. **文档解析库**：
-   - `pdf-parse` 或 `pdf-lib`：处理 PDF 文档解析
-   - `mammoth`：处理 Word 文档解析
-   - `xlsx`：处理 Excel 文档解析
-   - `pptx-parser`：处理 PPT 文档解析
-
-2. **OCR 库**：
-   - `tesseract.js`：纯 JS 实现的 OCR 功能，零 Python 依赖
-
-3. **认证与安全**：
-   - `jsonwebtoken`：JWT 令牌生成与验证
-   - `bcryptjs`：密码加密存储
-
-4. **环境配置**：
-   - `dotenv`：管理环境变量
-
-5. **日志管理**：
-   - `winston` 或 `pino`：结构化日志记录
-
-6. **错误处理**：
-   - `express-async-errors`：处理异步错误
-
-7. **文件操作**：
-   - `fs-extra`：增强的文件系统操作
-
-8. **工具库**：
-   - `lodash`：实用工具函数
-   - `validator`：输入验证
-
-9. **搜索功能**：
-   - `minisearch`：轻量级全文搜索库
-   - `nodejieba`：中文分词器
-
-## 开发时间线
-
-### 总目标
-3 天之内实现后端服务的 MVP 版本
 
 ## 模块划分与任务分解
 
-### 1. 项目初始化与环境搭建
+### 1. 项目初始化与环境搭建 ✅
 
-#### 1.1 创建项目目录
-- [x] 确认项目根目录存在（已存在）
-
-#### 1.2 初始化 Node.js 项目
-- [x] 运行 `npm init -y` 初始化 package.json
-- [x] 配置 package.json 基本信息
-
-#### 1.3 安装核心依赖
-- [x] 安装 Express.js 及相关中间件
-- [x] 安装 MongoDB 相关依赖
-- [x] 安装 LlamaIndex.TS 及相关依赖
-- [x] 安装其他必要工具库
-
-#### 1.4 创建环境配置
-- [x] 创建 .env 文件模板
-- [x] 配置数据库连接信息（基础配置已完成，连接字符串待提供）
-- [x] 配置服务器及安全相关参数
-
-#### 1.5 搭建核心目录结构
-- [x] 创建 src 目录
-- [x] 创建 controllers、services、models、routes 等核心目录
-- [x] 创建 config、utils 等辅助目录
-
-#### 1.6 配置数据库连接
-
-1. **编写数据库连接模块** ✅
-
-2. **测试数据库连接** ✅
-
-3. **初始化基础数据模型** ✅
-   - [x] 定义用户和角色模型
-   - [x] 定义知识库和文档模型
-   - [x] 定义对话和日志模型
-   - [x] 建立模型间关联
-   - [x] 初始化默认数据
-     - [x] 初始化角色数据（管理员角色和普通用户角色）
-     - [x] 初始化默认管理员用户
-     - [x] 初始化默认权限列表
-     - [x] 初始化默认示例知识库
-   - [x] 同步模型到数据库
-
-#### 1.7 创建基础服务
-
-1. **编写 Express 应用初始化代码** ✅
-   - [x] 创建主应用入口文件（如 index.js）
-   - [x] 加载环境变量
-   - [x] 初始化 Express 应用实例
-   - [x] 配置数据库连接
-   - [x] 注册中间件
-   - [x] 定义基础路由结构
-   - [x] 实现错误处理
-   - [x] 启动服务器
-   - [x] 配置应用监听端口
-
-2. **配置中间件** ✅
-
-3. **创建基础路由结构** ✅
-
-4. **实现自定义错误类** ✅
-   - [x] 创建继承自 Error 的自定义错误类
-   - [x] 包含错误码、状态码等信息
-   - [x] 提供统一的错误处理机制
-
-5. **实现日志管理功能** ✅
-   - [x] 安装 winston 日志库
-   - [x] 创建日志配置模块，支持多级别日志（error、warn、info、verbose、debug、silly）
-   - [x] 配置日志输出方式：控制台输出（开发环境）和文件输出（生产环境）
-   - [x] 设置日志文件按日期分割，自动压缩旧日志
-   - [x] 创建 Express 日志中间件，记录 HTTP 请求信息（方法、路径、状态码、响应时间）
-   - [ ] 在关键业务流程中添加日志记录
-
-#### 1.8 验证环境
-- [x] 启动服务
-- [x] 测试基础接口
-- [x] 验证数据库连接状态
+- [x] 创建项目目录、初始化 Node.js 项目、安装核心依赖
+- [x] 创建 .env 配置、搭建 src 目录结构（controllers、services、models、routes、config、utils）
+- [x] 配置 MongoDB 数据库连接，初始化数据模型（用户、角色、知识库、文档、对话、日志）
+- [x] 编写 Express 应用入口，注册中间件，定义路由结构，实现错误处理
+- [x] 实现自定义错误类和统一错误处理机制
+- [x] 配置 winston 日志，记录 HTTP 请求和关键业务日志
+- [x] 验证环境：启动服务、测试基础接口、验证数据库连接
 
 ### 2. 认证授权模块
 
@@ -523,18 +439,19 @@ Express 作为代理同时处理请求和响应时，默认会缓冲响应数据
 - [x] **流式响应优化**：使用 http.request + pipe 实现流式响应
 - [x] 测试点：验证 LLM 能正确生成回答，回答格式符合要求（引用、字数限制），边界情况处理正确，curl 测试流式响应正常
 
-#### 6.2 批次2：对话历史管理 ⏳
+#### 6.2 批次2：对话历史管理 ✅
 
-**批次A：保存对话记录** ⏳
-- [ ] 修改 chatService.js，添加保存对话记录方法
-- [ ] 修改对话接口（ask/ask-stream），集成保存逻辑
-- [ ] 测试点：验证提问后能正确保存对话记录
+**批次A：保存对话记录** ✅
+- [x] 修改 Chat 模型，添加 `title`、`messageCount` 字段
+- [x] 修改 chatService.js，添加 `saveChat()`、`updateChatAnswer()` 方法
+- [x] 修改对话接口（ask/askStream），集成保存逻辑
+- [x] 测试点：验证提问后能正确保存对话记录
 
-**批次B：历史管理接口** ⏳
-- [ ] 新增获取对话历史列表接口（`GET /api/v1/chat/history`）
-- [ ] 新增获取单条对话详情接口（`GET /api/v1/chat/:id`）
-- [ ] 新增删除对话接口（`DELETE /api/v1/chat/:id`）
-- [ ] 测试点：验证对话历史能正确查询和删除
+**批次B：历史管理接口** ✅
+- [x] 新增获取对话历史列表接口（`GET /api/v1/chat/history`）
+- [x] 新增获取单条对话详情接口（`GET /api/v1/chat/:id`）
+- [x] 新增删除对话接口（`DELETE /api/v1/chat/:id`）
+- [x] 测试点：验证对话历史能正确查询和删除
 
 #### 6.3 批次3：引用溯源与幻觉抑制 ⏳
 - [ ] 在回答中标记引用来源
@@ -545,35 +462,72 @@ Express 作为代理同时处理请求和响应时，默认会缓冲响应数据
 - [ ] 实现多轮对话支持
 - [ ] 实现 Query 预处理和拒答逻辑
 
-#### 6.x 健壮性增强（待开发） ⏳
+#### 6.x 健壮性增强（进行中） ⏳
 
 > **说明**：在完成基础对话功能开发后，经分析发现以下健壮性问题需要修复，以确保系统在生产环境中的稳定性和可靠性。
 
 **问题列表及修复思路**：
 
-**问题1：LLM 请求无超时保护**
+**问题1：LLM 请求无超时保护** ✅
 - 问题描述：Ollama API 调用可能无限等待，无超时限制
 - 修复思路：使用 `AbortController` + `AbortSignal.timeout()` 包装 fetch 请求，设置合理超时时间（如 60 秒），超时后主动中断请求
+- 状态：已完成，通过 `http.request.setTimeout()` 实现
 
-**问题2：流式读取无最大时长限制**
+**问题2：流式读取无最大时长限制** ⏳
 - 问题描述：`reader.read()` 可能永远阻塞，导致连接挂起
 - 修复思路：在读取循环中记录最后接收数据的时间戳，设定最大无数据等待时长（如 30 秒），超时后主动调用 `reader.cancel()` 中断流
+- 状态：已添加 `CHUNK_TIMEOUT` 配置，待验证
 
-**问题3：响应内容无最大长度限制**
+**问题3：响应内容无最大长度限制** ✅
 - 问题描述：LLM 可能无限输出，导致内存耗尽
 - 修复思路：设置最大答案长度阈值（如 5000 字），收集答案时实时判断，超过后截断并发送结束信号
+- 状态：已完成，通过 `MAX_ANSWER_LENGTH` 配置实现
 
-**问题4：异常时部分答案未保存**
+**问题4：异常时部分答案未保存** ✅
 - 问题描述：流式中途异常退出，`updateChatAnswer()` 未调用，对话记录不完整
 - 修复思路：使用 `try-finally` 确保无论如何都执行保存，即使未收集完整答案也保存已接收的部分
+- 状态：已完成，在所有异常处理路径（空闲超时、请求错误、请求超时）中添加了部分答案保存逻辑
 
-**问题5：流式结束后无确定性通知**
+**问题5：流式结束后无确定性通知** ✅
 - 问题描述：客户端难以判断流式是否真正结束
 - 修复思路：流结束时发送统一结束信号 `data: {"type":"end","chatId":"xxx"}`，客户端收到后执行最终确认逻辑
+- 状态：已完成，发送格式为 `{ code: 0, msg: 'success', data: { type: 'end', chatId: 'xxx' } }`
 
-**问题6：连接断开未感知**
+**问题6：连接断开未感知** ✅
 - 问题描述：客户端断开后服务端继续处理，浪费资源
 - 修复思路：监听 `req.abort` 或 `res.socket.destroy` 事件，检测到断开后立即取消 `reader`，停止处理
+- 状态：已完成，通过监听 `res.socket.on('close')` 和 `req.on('close')` 等事件实现，客户端断开后自动调用 `cancel()` 停止 Ollama 请求并保存部分答案
+
+#### 6.y 代码优化（进行中） ⏳
+
+> **说明**：在完成对话模块核心功能后，对代码质量进行优化，提升可维护性和可测试性。
+
+已完成：**优化1** ✅、**优化2** ✅、**优化3** ✅、**优化4** ✅ | **优化5** ⏸️ 延后
+
+**优化1：chatService.js 代码结构优化** ✅
+- 问题描述：`askStream` 方法较长（约 150 行），包含多个职责
+- 优化思路：拆分为辅助方法（`createOllamaRequest()`、`handleStreamData()`、`handleStreamError()`）
+- 状态：已完成，拆分为 8 个辅助函数：`createOllamaRequestOptions()`、`createStreamState()`、`clearIdleTimeout()`、`resetIdleTimeout()`、`handleStreamData()`、`handleStreamEnd()`、`handleStreamError()`、`handleStreamTimeout()`
+
+**优化2：配置常量集中管理** ✅
+- 问题描述：配置常量分散在文件顶部
+- 优化思路：抽取到独立的 `config/llm.js` 配置文件，便于统一管理
+- 状态：已完成，创建 `src/config/llm.js` 配置文件，包含 LLM_CONFIG、RETRIEVAL_CONFIG、SYSTEM_PROMPT 三个导出对象
+
+**优化3：错误类型细化** ✅
+- 问题描述：当前错误都是通用的 `Error`
+- 优化思路：定义专用错误类（`LLMTimeoutError`、`LLMConnectionError`、`StreamInterruptedError`），便于前端区分处理
+- 状态：已完成，在 `src/utils/error.js` 中新增 4 个 LLM 相关错误类：`LLMTimeoutError`（504）、`LLMConnectionError`（503）、`StreamInterruptedError`（499）、`NoRelevantContentError`（200）
+
+**优化4：流式响应数据格式优化** ✅
+- 问题描述：当前流式响应直接转发 Ollama 原始数据
+- 优化思路：解析 Ollama 的 JSON 响应，只提取 `content` 字段，减少传输数据量
+- 状态：已完成，新增 `parseOllamaStreamData()` 函数解析 Ollama 响应，只提取 `content` 字段发送
+
+**优化5：单元测试覆盖** ⏸️
+- 问题描述：对话模块缺少单元测试
+- 优化思路：为核心方法添加测试（`saveChat()`、`updateChatAnswer()`、`buildContext()`）
+- 状态：延后，当前 MVP 阶段重点是功能验证，测试框架引入成本较高，可后续迭代补齐
 
 ### 7. 用户管理模块
 

@@ -163,6 +163,27 @@ const askSchema = Joi.object({
   })
 });
 
+const queryChatHistorySchema = Joi.object({
+  page: Joi.number().integer().min(1).default(1).messages({
+    'number.base': '页码必须是数字',
+    'number.integer': '页码必须是整数',
+    'number.min': '页码最小为1'
+  }),
+  pageSize: Joi.number().integer().min(1).max(100).default(10).messages({
+    'number.base': '每页数量必须是数字',
+    'number.integer': '每页数量必须是整数',
+    'number.min': '每页数量最小为1',
+    'number.max': '每页数量最大为100'
+  })
+});
+
+const chatIdSchema = Joi.object({
+  id: Joi.string().required().messages({
+    'string.empty': '对话ID不能为空',
+    'any.required': '对话ID是必填项'
+  })
+});
+
 module.exports = {
   validate,
   loginSchema,
@@ -175,5 +196,7 @@ module.exports = {
   queryDocumentSchema,
   searchSchema,
   hybridSearchSchema,
-  askSchema
+  askSchema,
+  queryChatHistorySchema,
+  chatIdSchema
 };
