@@ -3,8 +3,9 @@ const chatService = require('../services/chatService');
 const chatController = {
   async ask(req, res) {
     const { query, knowledgeBaseId } = req.body;
+    const userId = req.user?._id;
 
-    const result = await chatService.ask(query, { knowledgeBaseId });
+    const result = await chatService.ask(query, { userId, knowledgeBaseId });
 
     if (result.message === '暂无相关信息') {
       res.json({
@@ -34,6 +35,7 @@ const chatController = {
 
   async askStream(req, res) {
     const { query, knowledgeBaseId } = req.body;
+    const userId = req.user?._id;
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -52,7 +54,7 @@ const chatController = {
     };
 
     try {
-      await chatService.askStream(query, { knowledgeBaseId, onChunk: sendChunk, onEnd: sendEnd });
+      await chatService.askStream(query, { userId, knowledgeBaseId, onChunk: sendChunk, onEnd: sendEnd });
     } catch (error) {
       res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
       res.end();

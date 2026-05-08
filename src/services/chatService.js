@@ -1,5 +1,7 @@
-const retrievalService = require('./retrievalService');
-const logger = require('../utils/logger');
+const http = require("http");
+const retrievalService = require("./retrievalService");
+const Chat = require("../models/Chat");
+const logger = require("../utils/logger");
 
 const SYSTEM_PROMPT = `【系统提示词】
 你是一个专业的知识库问答助手。请根据提供的参考信息回答用户的问题。
@@ -14,10 +16,14 @@ const SYSTEM_PROMPT = `【系统提示词】
 
 const DEFAULT_TOP_K = 5;
 const DEFAULT_MAX_TOKEN = 800;
+const DEFAULT_LLM_TIMEOUT = 60000;
+const DEFAULT_CHUNK_TIMEOUT = 5000;
 
 const config = {
-  ollamaUrl: process.env.OLLAMA_URL || 'http://localhost:11434',
-  chatModel: process.env.LLM_MODEL || 'qwen3.5:4b'
+  ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434",
+  chatModel: process.env.LLM_MODEL || "qwen3.5:4b",
+  llmTimeout: parseInt(process.env.LLM_TIMEOUT) || DEFAULT_LLM_TIMEOUT,
+  chunkTimeout: parseInt(process.env.CHUNK_TIMEOUT) || DEFAULT_CHUNK_TIMEOUT,
 };
 
 function truncateText(text, maxToken = DEFAULT_MAX_TOKEN) {
@@ -26,49 +32,28 @@ function truncateText(text, maxToken = DEFAULT_MAX_TOKEN) {
   if (text.length <= maxChars) {
     return text;
   }
-  return text.substring(0, maxChars) + '...';
+  return text.substring(0, maxChars) + "...";
 }
 
 function buildContext(chunks) {
   if (!chunks || chunks.length === 0) {
-    return '无相关参考信息';
+    return "无相关参考信息";
   }
-
-  return chunks.map((chunk, index) => {
-    const truncatedContent = truncateText(chunk.content || '');
-    const docName = chunk.documentName || '未知文档';
-    return `[${index + 1}] ${docName}\n${truncatedContent}`;
-  }).join('\n\n');
+  return chunks
+    .map((chunk, index) => {
+      const truncatedContent = truncateText(chunk.content || "");
+      const docName = chunk.documentName || "未知文档";
+      return `[${index + 1}] ${docName}\n${truncatedContent}`;
+    })
+    .join("\n\n");
 }
 
-function buildPrompt(query, chunks, options = {}) {
-  const { maxContextLength = 3000 } = options;
-
+function buildPrompt(query, chunks) {
   const context = buildContext(chunks);
-  const contextLength = context.length;
-
-  let finalContext = context;
-  if (contextLength > maxContextLength) {
-    const truncatedChunks = [];
-    let currentLength = 0;
-    for (const chunk of chunks) {
-      const truncatedContent = truncateText(chunk.content || '');
-      if (currentLength + truncatedContent.length > maxContextLength * 0.8) {
-        break;
-      }
-      truncatedChunks.push(truncatedContent);
-      currentLength += truncatedContent.length;
-    }
-    finalContext = buildContext(truncatedChunks.map((content, index) => ({
-      ...chunks[index],
-      content
-    })));
-  }
-
   return `${SYSTEM_PROMPT}
 
 【参考信息】
-${finalContext}
+${context}
 
 【用户问题】
 ${query}
@@ -76,208 +61,278 @@ ${query}
 【回答】`;
 }
 
-async function chatWithLLM(prompt, options = {}) {
-  const { stream = false } = options;
-  const ollamaUrl = config.ollamaUrl;
-  const model = config.chatModel;
-
-  logger.info(`Calling Ollama API: ${ollamaUrl}/api/chat with model ${model}, stream=${stream}`);
-
-  try {
-    const response = await fetch(`${ollamaUrl}/api/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          }
-        ],
-        stream: stream,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Ollama API returned ${response.status}`);
-    }
-
-    return { response, chunks: [] };
-  } catch (error) {
-    logger.error(`Ollama API call failed: ${error.message}`);
-    throw error;
-  }
-}
-
 function extractReferences(answer, chunks) {
   const references = [];
-
   const referencePattern = /\[(\d+)\]/g;
   const usedIndices = new Set();
-
   let match;
   while ((match = referencePattern.exec(answer)) !== null) {
     const index = parseInt(match[1], 10) - 1;
     if (index >= 0 && index < chunks.length && !usedIndices.has(index)) {
       usedIndices.add(index);
-      const chunk = chunks[index];
       references.push({
-        index: index + 1,
-        documentId: chunk.documentId || null,
-        documentName: chunk.documentName || '未知文档',
-        content: chunk.content || '',
+        documentId: chunks[index].documentId || null,
+        documentName: chunks[index].documentName || "未知文档",
+        content: chunks[index].content || "",
       });
     }
   }
-
   return references;
+}
+
+function generateTitle(query) {
+  if (!query) return "新对话";
+  return query.length > 20 ? query.substring(0, 20) + "..." : query;
 }
 
 const chatService = {
   async buildContext(query, options = {}) {
     const { knowledgeBaseId, topK = DEFAULT_TOP_K } = options;
-
     logger.info(`Building context for query: ${query}`);
-
-    const chunks = await retrievalService.hybridSearch(query, {
-      knowledgeBaseId,
-      topK,
-    });
-
+    const chunks = await retrievalService.hybridSearch(query, { knowledgeBaseId, topK });
     logger.info(`Retrieved ${chunks.length} chunks for context`);
-
     return chunks;
   },
 
-  async ask(query, options = {}) {
-    const { knowledgeBaseId, topK = DEFAULT_TOP_K } = options;
+  async saveChat(userId, knowledgeBaseId, query, answer, chunks) {
+    const title = generateTitle(query);
+    const references = answer ? extractReferences(answer, chunks) : [];
+    const chat = new Chat({
+      userId,
+      knowledgeBaseId: knowledgeBaseId || null,
+      title,
+      messageCount: answer ? 2 : 1,
+      messages: [{ role: "user", content: query }, ...(answer ? [{ role: "assistant", content: answer, references }] : [])],
+    });
+    await chat.save();
+    logger.info(`Chat saved: ${chat._id}`);
+    return chat;
+  },
 
+  async updateChatAnswer(chatId, answer, chunks) {
+    const references = extractReferences(answer, chunks);
+    await Chat.findByIdAndUpdate(chatId, {
+      $push: { messages: { role: "assistant", content: answer, references } },
+      $inc: { messageCount: 1 },
+      updatedAt: new Date(),
+    });
+    logger.info(`Chat answer updated: ${chatId}`);
+  },
+
+  async ask(query, options = {}) {
+    const { userId, knowledgeBaseId, topK = DEFAULT_TOP_K } = options;
     const chunks = await this.buildContext(query, { knowledgeBaseId, topK });
 
     if (chunks.length === 0) {
-      return {
-        query,
-        chunks: [],
-        answer: null,
-        references: [],
-        message: '暂无相关信息',
-      };
+      if (userId) {
+        const chat = await this.saveChat(userId, knowledgeBaseId, query, null, []);
+        return { query, chunks: [], answer: null, references: [], message: "暂无相关信息", chatId: chat._id };
+      }
+      return { query, chunks: [], answer: null, references: [], message: "暂无相关信息" };
     }
 
-    const context = buildContext(chunks);
     const prompt = buildPrompt(query, chunks);
+    logger.info("Sending prompt to LLM...");
 
-    logger.info('Sending prompt to LLM...');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), config.llmTimeout);
 
     try {
       const response = await fetch(`${config.ollamaUrl}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: config.chatModel,
-          messages: [{ role: 'user', content: prompt }],
+          messages: [{ role: "user", content: prompt }],
           stream: false,
         }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`Ollama API returned ${response.status}`);
       }
 
       const data = await response.json();
-      const answer = data.message?.content || '';
-      logger.info('Received answer from LLM');
+      const answer = data.message?.content || "";
+      logger.info("Received answer from LLM");
 
       const references = extractReferences(answer, chunks);
+      let chatId = null;
+      if (userId) {
+        const chat = await this.saveChat(userId, knowledgeBaseId, query, answer, chunks);
+        chatId = chat._id;
+      }
 
-      return {
-        query,
-        chunks,
-        prompt,
-        context,
-        answer,
-        references,
-        message: null,
-      };
+      return { query, chunks, answer, references, message: null, chatId };
     } catch (error) {
-      logger.error(`Ollama API call failed: ${error.message}`);
+      clearTimeout(timeoutId);
+      if (error.name === "AbortError") {
+        throw new Error("LLM 请求超时");
+      }
       throw error;
     }
   },
 
+  async createStreamRequest(query, options = {}) {
+    const { userId, knowledgeBaseId, topK = DEFAULT_TOP_K } = options;
+
+    const chunks = await this.buildContext(query, { knowledgeBaseId, topK });
+
+    let chatId = null;
+    if (userId && chunks.length > 0) {
+      const chat = await this.saveChat(userId, knowledgeBaseId, query, null, chunks);
+      chatId = chat._id;
+    }
+
+    const result = {
+      chatId,
+      chunks,
+      hasChunks: chunks.length > 0,
+      prompt: null,
+      ollamaReq: null,
+      cleanup: null,
+    };
+
+    if (chunks.length === 0) {
+      return result;
+    }
+
+    const prompt = buildPrompt(query, chunks);
+    result.prompt = prompt;
+
+    const url = new URL(config.ollamaUrl);
+    const requestOptions = {
+      hostname: url.hostname,
+      port: url.port || 80,
+      path: "/api/chat",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    };
+
+    result.ollamaReq = http.request(requestOptions);
+
+    result.cleanup = () => {};
+
+    return result;
+  },
+
+  async finalizeStream(chatId, fullAnswer, chunks) {
+    if (chatId && fullAnswer) {
+      await this.updateChatAnswer(chatId, fullAnswer, chunks);
+    }
+  },
+
   async askStream(query, options = {}) {
-    const { knowledgeBaseId, topK = DEFAULT_TOP_K, onChunk, onEnd } = options;
+    const { userId, knowledgeBaseId, topK = DEFAULT_TOP_K, onChunk, onEnd } = options;
 
     const chunks = await this.buildContext(query, { knowledgeBaseId, topK });
 
     if (chunks.length === 0) {
-      if (onChunk) {
-        onChunk('data: {"type":"end","content":"暂无相关信息"}\n\n');
-      }
-      if (onEnd) {
-        onEnd();
-      }
-      return;
+      if (onChunk) onChunk('data: {"type":"end","content":"暂无相关信息"}\n\n');
+      if (onEnd) onEnd();
+      if (userId) await this.saveChat(userId, knowledgeBaseId, query, null, []);
+      return { chatId: null };
     }
 
-    const context = buildContext(chunks);
+    let chatId = null;
+    if (userId) {
+      const chat = await this.saveChat(userId, knowledgeBaseId, query, null, chunks);
+      chatId = chat._id;
+    }
+
     const prompt = buildPrompt(query, chunks);
+    logger.info("Sending prompt to LLM (streaming)...");
 
-    logger.info('Sending prompt to LLM (streaming)...');
+    const url = new URL(config.ollamaUrl);
+    const options_ = {
+      hostname: url.hostname,
+      port: url.port || 80,
+      path: "/api/chat",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    };
 
-    const { response } = await chatWithLLM(prompt, { stream: true });
+    return new Promise((resolve, reject) => {
+      let fullAnswer = "";
+      let saved = false;
+      let lastDataTime = Date.now();
+      let idleTimeoutId = null;
 
-    if (!response.body) {
-      throw new Error('Response body is null');
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (done) {
-        logger.info('Stream completed');
-        if (onEnd) {
-          onEnd();
+      const clearIdleTimeout = () => {
+        if (idleTimeoutId) {
+          clearTimeout(idleTimeoutId);
+          idleTimeoutId = null;
         }
-        break;
-      }
+      };
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      const resetIdleTimeout = () => {
+        clearIdleTimeout();
+        idleTimeoutId = setTimeout(() => {
+          logger.error("Stream idle timeout: no data received for", config.chunkTimeout, "ms");
+          ollamaReq.destroy();
+          if (onChunk) onChunk(`data: ${JSON.stringify({ type: "error", message: "响应超时，无数据等待过久" })}\n\n`);
+          if (onEnd) onEnd();
+          reject(new Error("响应超时"));
+        }, config.chunkTimeout);
+      };
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const jsonStr = line.slice(6);
-            if (jsonStr === '[DONE]') {
-              logger.info('Stream done signal received');
-              if (onEnd) {
-                onEnd();
-              }
-              break;
+      const ollamaReq = http.request(options_, async (ollamaRes) => {
+        resetIdleTimeout();
+
+        ollamaRes.on("data", (chunk) => {
+          lastDataTime = Date.now();
+          resetIdleTimeout();
+          const text = chunk.toString();
+          fullAnswer += text;
+          if (onChunk) onChunk(text);
+        });
+
+        ollamaRes.on("end", async () => {
+          clearIdleTimeout();
+          if (chatId && fullAnswer && !saved) {
+            try {
+              await this.updateChatAnswer(chatId, fullAnswer, chunks);
+            } catch (e) {
+              logger.error("Update chat answer failed:", e);
             }
-            const data = JSON.parse(jsonStr);
-            const content = data.message?.content || '';
-            if (content && onChunk) {
-              onChunk(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
-            }
-          } catch (e) {
-            // ignore parse error
           }
-        }
-      }
-    }
+          if (onEnd) onEnd();
+          resolve({ chatId });
+        });
+      });
+
+      ollamaReq.on("error", (err) => {
+        clearIdleTimeout();
+        logger.error("Ollama request error:", err);
+        if (onChunk) onChunk(`data: ${JSON.stringify({ type: "error", message: err.message })}\n\n`);
+        if (onEnd) onEnd();
+        reject(err);
+      });
+
+      ollamaReq.on("timeout", () => {
+        clearIdleTimeout();
+        logger.error("Ollama request timeout");
+        ollamaReq.destroy();
+        if (onChunk) onChunk(`data: ${JSON.stringify({ type: "error", message: "LLM 请求超时" })}\n\n`);
+        if (onEnd) onEnd();
+        reject(new Error("LLM 请求超时"));
+      });
+
+      ollamaReq.setTimeout(config.llmTimeout);
+
+      ollamaReq.write(
+        JSON.stringify({
+          model: config.chatModel,
+          messages: [{ role: "user", content: prompt }],
+          stream: true,
+        })
+      );
+
+      ollamaReq.end();
+    });
   },
 };
 
