@@ -61,55 +61,13 @@
 - [x] 配置 winston 日志，记录 HTTP 请求和关键业务日志
 - [x] 验证环境：启动服务、测试基础接口、验证数据库连接
 
-### 2. 认证授权模块
+### 2. 认证授权模块 ✅
 
-1. **实现用户登录接口** ✅
-   - [x] 接收用户提交的用户名和密码
-   - [x] 验证用户凭据
-   - [x] 生成 JWT 令牌
-   - [x] 返回令牌和用户信息
-
-2. **实现 JWT 认证机制** ✅
-   - [x] 创建认证中间件
-   - [x] 验证请求头中的 JWT 令牌
-   - [x] 解析令牌获取用户信息
-   - [x] 将用户信息添加到请求对象中
-
-3. **实现 Token 管理（同一用户仅能存在一个有效 Token）** ✅
-   - [x] 在用户登录时生成新令牌
-   - [x] 存储令牌到用户模型中
-   - [x] 确保同一用户仅能存在一个有效令牌
-   - [x] 在令牌过期或用户登出时更新令牌状态
-
-4. **实现权限验证中间件** ✅
-   - [x] 检查用户是否有权限访问特定资源
-   - [x] 根据用户角色和权限列表进行权限判断
-   - [x] 对无权限的请求返回 403 错误
-
-5. **实现用户登出接口** ✅
-   - [x] 接收用户登出请求
-   - [x] 使当前令牌失效
-   - [x] 更新用户模型中的令牌状态
-   - [x] 返回登出成功响应
-
-#### JWT 令牌使用方式
-
-1. **获取令牌**：通过登录接口 `POST /api/v1/auth/login` 获取 JWT 令牌
-2. **携带令牌**：在请求头中添加 `Authorization` 字段，格式为 `Bearer <token>`
-3. **访问受保护资源**：使用携带令牌的请求访问需要认证的接口，如 `GET /api/v1/auth/user-info`
-4. **登出**：通过登出接口 `POST /api/v1/auth/logout` 使令牌失效
-
-示例请求：
-```bash
-# 登录获取令牌
-curl -X POST http://localhost:3000/api/v1/auth/login -H "Content-Type: application/json" -d '{"username": "admin", "password": "admin123"}'
-
-# 使用令牌访问受保护资源
-curl -X GET http://localhost:3000/api/v1/auth/user-info -H "Authorization: Bearer <token>" 
-
-# 登出
-curl -X POST http://localhost:3000/api/v1/auth/logout -H "Authorization: Bearer <token>" 
-```
+- [x] 实现用户登录接口（用户名密码验证、生成 JWT 令牌）
+- [x] 实现 JWT 认证中间件（验证请求头、解析用户信息）
+- [x] 实现 Token 管理机制（同一用户仅一个有效 Token，存储于用户模型，24h 有效期）
+- [x] 实现权限验证中间件（角色权限校验，403 拒绝无权限请求）
+- [x] 实现用户登出接口（使 Token 失效）
 
 ### 3. 知识库管理模块
 
@@ -473,10 +431,10 @@ Express 作为代理同时处理请求和响应时，默认会缓冲响应数据
 - 修复思路：使用 `AbortController` + `AbortSignal.timeout()` 包装 fetch 请求，设置合理超时时间（如 60 秒），超时后主动中断请求
 - 状态：已完成，通过 `http.request.setTimeout()` 实现
 
-**问题2：流式读取无最大时长限制** ⏳
+**问题2：流式读取无最大时长限制** ✅
 - 问题描述：`reader.read()` 可能永远阻塞，导致连接挂起
 - 修复思路：在读取循环中记录最后接收数据的时间戳，设定最大无数据等待时长（如 30 秒），超时后主动调用 `reader.cancel()` 中断流
-- 状态：已添加 `CHUNK_TIMEOUT` 配置，待验证
+- 状态：已完成，通过 `CHUNK_TIMEOUT` 配置和 `resetIdleTimeout()` 函数实现空闲超时检测
 
 **问题3：响应内容无最大长度限制** ✅
 - 问题描述：LLM 可能无限输出，导致内存耗尽
@@ -640,6 +598,8 @@ Express 作为代理同时处理请求和响应时，默认会缓冲响应数据
 | _id | ObjectId | 对话唯一标识 |
 | userId | ObjectId | 发起对话的用户 ID |
 | knowledgeBaseId | ObjectId | 对话关联的知识库 ID |
+| title | String | 对话标题（自动生成或用户指定） |
+| messageCount | Number | 消息数量 |
 | messages | Array<Object> | 对话消息列表 |
 | createdAt | Date | 创建时间 |
 | updatedAt | Date | 更新时间 |
@@ -696,7 +656,8 @@ Express 作为代理同时处理请求和响应时，默认会缓冲响应数据
 - POST /api/v1/chat/ask - 发送问题（非流式）
 - POST /api/v1/chat/ask/stream - 发送问题（流式响应）
 - GET /api/v1/chat/history - 获取对话历史
-- DELETE /api/v1/chat/history/{id} - 删除对话历史
+- GET /api/v1/chat/:id - 获取单条对话详情
+- DELETE /api/v1/chat/:id - 删除对话历史
 
 ### 用户管理接口
 - GET /api/v1/users - 获取用户列表

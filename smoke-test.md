@@ -36,63 +36,63 @@ curl http://localhost:3000/api/v1/auth/login -X POST -H "Content-Type: applicati
 
 | 序号 | 测试项 | 方法 | 预期结果 | 状态 |
 |------|--------|------|----------|------|
-| 1.1 | 正确账号登录 | POST /auth/login | 返回 token | ☐ |
-| 1.2 | 错误密码登录 | POST /auth/login | 返回 401 | ☐ |
-| 1.3 | 不存在账号登录 | POST /auth/login | 返回 401 | ☐ |
-| 1.4 | 无 Token 访问受保护接口 | GET /knowledge | 返回 401 | ☐ |
-| 1.5 | 登出接口 | POST /auth/logout | Token 失效 | ☐ |
+| 1.1 | 正确账号登录 | POST /auth/login | 返回 token | ✅ |
+| 1.2 | 错误密码登录 | POST /auth/login | 返回 401 | ✅ |
+| 1.3 | 不存在账号登录 | POST /auth/login | 返回 401 | ✅ |
+| 1.4 | 无 Token 访问受保护接口 | GET /knowledge | 返回 401 | ✅ |
+| 1.5 | 登出接口 | POST /auth/logout | Token 失效 | ✅ |
 
 ### 2. 知识库管理模块
 
 | 序号 | 测试项 | 方法 | 预期结果 | 状态 |
 |------|--------|------|----------|------|
-| 2.1 | 创建知识库 | POST /knowledge | 返回知识库信息 | ☐ |
-| 2.2 | 获取知识库列表 | GET /knowledge | 返回列表和分页 | ☐ |
-| 2.3 | 获取单个知识库 | GET /knowledge/:id | 返回知识库详情 | ☐ |
-| 2.4 | 更新知识库 | PUT /knowledge/:id | 返回更新后信息 | ☐ |
-| 2.5 | 删除知识库 | DELETE /knowledge/:id | 返回成功 | ☐ |
+| 2.1 | 创建知识库 | POST /knowledge | 返回知识库信息 | ✅ |
+| 2.2 | 获取知识库列表 | GET /knowledge | 返回列表和分页 | ✅ |
+| 2.3 | 获取单个知识库 | GET /knowledge/:id | 返回知识库详情 | ✅ |
+| 2.4 | 更新知识库 | PUT /knowledge/:id | 返回更新后信息 | ✅ |
+| 2.5 | 删除知识库 | DELETE /knowledge/:id | 返回成功 | ✅ |
 
 ### 3. 文档处理模块
 
 | 序号 | 测试项 | 方法 | 预期结果 | 状态 |
 |------|--------|------|----------|------|
-| 3.1 | 上传 PDF 文档 | POST /documents/upload | 返回 documentId | ☐ |
-| 3.2 | 上传 Word 文档 | POST /documents/upload | 返回 documentId | ☐ |
-| 3.3 | 上传 TXT 文档 | POST /documents/upload | 返回 documentId | ☐ |
-| 3.4 | 查看文档列表 | GET /documents | 返回列表 | ☐ |
-| 3.5 | 查看文档处理状态 | GET /documents/:id | 返回状态 | ☐ |
-| 3.6 | 删除文档 | DELETE /documents/:id | 返回成功 | ☐ |
+| 3.1 | 上传 PDF 文档 | POST /documents/upload | 返回 documentId | ✅ 人工测试 |
+| 3.2 | 上传 Word 文档 | POST /documents/upload | 返回 documentId | ✅ 人工测试 |
+| 3.3 | 上传 TXT 文档 | POST /documents/upload | 返回 documentId | ✅ 人工测试 |
+| 3.4 | 查看文档列表 | GET /documents | 返回列表 | ✅ 人工测试 |
+| 3.5 | 查看文档处理状态 | GET /documents/:id | 返回状态 | ✅ 人工测试 |
+| 3.6 | 删除文档 | DELETE /documents/:id | 返回成功 | ✅ 人工测试 |
 
 ### 4. 检索功能模块
 
 | 序号 | 测试项 | 方法 | 预期结果 | 状态 |
 |------|--------|------|----------|------|
-| 4.1 | 向量检索 | GET /retrieval/search | 返回检索结果 | ☐ |
-| 4.2 | BM25 检索 | GET /retrieval/bm25 | 返回检索结果 | ☐ |
-| 4.3 | 混合检索 | GET /retrieval/hybrid | 返回融合结果 | ☐ |
-| 4.4 | 空知识库检索 | GET /retrieval/hybrid | 返回空数组 | ☐ |
+| 4.1 | 向量检索 | GET /retrieval/search | 返回检索结果 | ✅ 人工测试 |
+| 4.2 | BM25 检索 | GET /retrieval/bm25 | 返回检索结果 | ✅ 人工测试 |
+| 4.3 | 混合检索 | GET /retrieval/hybrid | 返回融合结果 | ✅ 人工测试 |
+| 4.4 | 空知识库检索 | GET /retrieval/hybrid | 返回空数组 | ✅ 人工测试 |
 
 ### 5. 对话功能模块（核心）
 
 | 序号 | 测试项 | 方法 | 预期结果 | 状态 |
 |------|--------|------|----------|------|
-| 5.1 | 非流式提问 | POST /chat/ask | 返回完整回答 | ☐ |
-| 5.2 | 流式提问 | POST /chat/ask/stream | SSE 流式返回 | ☐ |
-| 5.3 | 空知识库提问 | POST /chat/ask | 返回"暂无相关信息" | ☐ |
-| 5.4 | 超长问题提问 | POST /chat/ask | 返回错误或截断 | ☐ |
-| 5.5 | 流式中断（取消请求） | POST /chat/ask/stream | 部分答案保存 | ☐ |
-| 5.6 | 无效 knowledgeBaseId | POST /chat/ask | 正常处理 | ☐ |
+| 5.1 | 非流式提问 | POST /chat/ask | 返回完整回答 | ✅ 人工测试 |
+| 5.2 | 流式提问 | POST /chat/ask/stream | SSE 流式返回 | ✅ 人工测试 |
+| 5.3 | 空知识库提问 | POST /chat/ask | 返回"暂无相关信息" | ✅ 人工测试 |
+| 5.4 | 超长问题提问 | POST /chat/ask | 返回错误或截断 | ✅ 人工测试 |
+| 5.5 | 流式中断（取消请求） | POST /chat/ask/stream | 部分答案保存 | ✅ 人工测试 |
+| 5.6 | 无效 knowledgeBaseId | POST /chat/ask | 正常处理 | ✅ 人工测试 |
 
 ### 6. 历史管理模块
 
 | 序号 | 测试项 | 方法 | 预期结果 | 状态 |
 |------|--------|------|----------|------|
-| 6.1 | 获取历史列表 | GET /chat/history | 返回分页列表 | ☐ |
-| 6.2 | 历史列表分页 | GET /chat/history?page=1&pageSize=5 | 返回指定页 | ☐ |
-| 6.3 | 获取单条详情 | GET /chat/:id | 返回对话详情 | ☐ |
-| 6.4 | 删除对话 | DELETE /chat/:id | 返回成功 | ☐ |
-| 6.5 | 删除后查看历史 | GET /chat/history | 对话已移除 | ☐ |
-| 6.6 | 访问他人对话 | GET /chat/:id | 返回 404 | ☐ |
+| 6.1 | 获取历史列表 | GET /chat/history | 返回分页列表 | ✅ 人工测试 |
+| 6.2 | 历史列表分页 | GET /chat/history?page=1&pageSize=5 | 返回指定页 | ✅ 人工测试 |
+| 6.3 | 获取单条详情 | GET /chat/:id | 返回对话详情 | ✅ 人工测试 |
+| 6.4 | 删除对话 | DELETE /chat/:id | 返回成功 | ✅ 人工测试 |
+| 6.5 | 删除后查看历史 | GET /chat/history | 对话已移除 | ✅ 人工测试 |
+| 6.6 | 访问他人对话 | GET /chat/:id | 返回 404 | ✅ 人工测试 |
 
 ---
 
@@ -100,10 +100,10 @@ curl http://localhost:3000/api/v1/auth/login -X POST -H "Content-Type: applicati
 
 | 序号 | 测试项 | 方法 | 预期结果 | 状态 |
 |------|--------|------|----------|------|
-| B.1 | Ollama 不可用时提问 | 停止 Ollama 后提问 | 返回服务不可用提示 | ☐ |
-| B.2 | 空查询参数 | GET /retrieval/search?query= | 返回验证错误 | ☐ |
-| B.3 | SQL 注入尝试 | query=SELECT * FROM | 安全处理 | ☐ |
-| B.4 | 超大 pageSize | GET /chat/history?pageSize=1000 | 受限或正常 | ☐ |
+| B.1 | Ollama 不可用时提问 | 停止 Ollama 后提问 | 返回服务不可用提示 | ✅ 人工测试 |
+| B.2 | 空查询参数 | GET /retrieval/search?query= | 返回验证错误 | ✅ 人工测试 |
+| B.3 | SQL 注入尝试 | query=SELECT * FROM | 安全处理 | ✅ 人工测试 |
+| B.4 | 超大 pageSize | GET /chat/history?pageSize=1000 | 受限或正常 | ✅ 人工测试 |
 
 ---
 
@@ -119,16 +119,27 @@ curl http://localhost:3000/api/v1/auth/login -X POST -H "Content-Type: applicati
 
 ### 测试摘要
 
-- **测试时间**：
-- **测试人员**：
-- **环境版本**：
-- **通过率**：
-- **阻塞问题数**：
+- **测试时间**：2026-05-09
+- **测试人员**：人工 + 自动化结合
+- **环境版本**：Node.js + MongoDB + Ollama
+- **通过率**：31/31 (100%)
+- **阻塞问题数**：0
 
 ### 测试结论
 
-□ 通过 - 可进入下一阶段
-□ 未通过 - 需要修复后重新测试
+✅ 通过 - 所有模块测试通过，可进入下一阶段
+
+### 测试模块汇总
+
+| 模块 | 测试项数 | 通过数 | 状态 |
+|------|----------|--------|------|
+| 1. 认证授权模块 | 5 | 5 | ✅ |
+| 2. 知识库管理模块 | 5 | 5 | ✅ |
+| 3. 文档处理模块 | 6 | 6 | ✅ |
+| 4. 检索功能模块 | 4 | 4 | ✅ |
+| 5. 对话功能模块 | 6 | 6 | ✅ |
+| 6. 历史管理模块 | 6 | 6 | ✅ |
+| 边界情况测试 | 4 | 4 | ✅ |
 
 ---
 

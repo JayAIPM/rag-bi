@@ -1,5 +1,6 @@
 const retrievalService = require('../services/retrievalService');
 
+// 向量检索接口
 const retrievalController = {
   async search(req, res) {
     const { query, knowledgeBaseId, limit } = req.query;
@@ -20,6 +21,7 @@ const retrievalController = {
     });
   },
 
+  // BM25 检索接口
   async bm25Search(req, res) {
     const { query, knowledgeBaseId, limit } = req.query;
 
@@ -39,6 +41,7 @@ const retrievalController = {
     });
   },
 
+  // 混合检索接口
   async hybridSearch(req, res) {
     const { query, knowledgeBaseId, limit, k } = req.query;
 

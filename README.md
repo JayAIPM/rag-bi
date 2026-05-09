@@ -91,9 +91,14 @@
 | `/document`        | POST     | 上传文档并触发向量化入库          | 知识库管理员 |
 | `/document`        | GET      | 获取文档列表                      | 登录用户     |
 | `/document/{id}`   | DELETE   | 删除文档与对应向量数据            | 知识库管理员 |
-| `/chat/ask`        | POST     | 发送问题，触发 RAG 全流程返回回答 | 登录用户     |
+| `/chat/ask`        | POST     | 发送问题（非流式）                | 登录用户     |
+| `/chat/ask/stream` | POST     | 发送问题（流式响应）              | 登录用户     |
 | `/chat/history`    | GET      | 获取用户对话历史                  | 登录用户     |
-| `/chat/history/{id}` | DELETE  | 删除对话历史                      | 登录用户     |
+| `/chat/{id}`       | GET      | 获取单条对话详情                  | 登录用户     |
+| `/chat/{id}`       | DELETE   | 删除对话历史                      | 登录用户     |
+| `/retrieval/search` | GET     | 向量检索                          | 登录用户     |
+| `/retrieval/bm25`  | GET      | BM25 检索                        | 登录用户     |
+| `/retrieval/hybrid`| GET      | 混合检索                          | 登录用户     |
 | `/users`           | GET      | 获取用户列表                      | 管理员       |
 | `/users`           | POST     | 创建用户                          | 管理员       |
 | `/users/{id}`      | PUT      | 更新用户信息                      | 管理员       |
@@ -173,116 +178,72 @@
 
 ## 📊 数据模型设计
 
-### 用户模型（User）
+> 完整数据模型定义请参考 [development-plan.md](development-plan.md#数据模型设计)
 
-| 字段名 | 类型 | 描述 |
+### 数据模型概览
+
+| 模型名称 | 核心字段 | 用途 |
 | --- | --- | --- |
-| `_id` | ObjectId | 用户 ID |
-| `username` | String | 用户名 |
-| `password` | String | 密码（加密存储） |
-| `email` | String | 邮箱 |
-| `role` | String | 角色 ID |
-| `organization` | String | 组织 ID |
-| `lastLogin` | Date | 最后登录时间 |
-| `token` | String | 当前有效 Token |
-| `createdAt` | Date | 创建时间 |
-| `updatedAt` | Date | 更新时间 |
+| User | username, password, role, token | 用户认证与权限 |
+| Role | name, permissions | 角色与权限定义 |
+| KnowledgeBase | name, owner, documentCount | 知识库管理 |
+| Document | knowledgeBaseId, type, path, vectorCount | 文档元数据 |
+| Chat | userId, title, messageCount, messages | 对话记录 |
+| Log | userId, action, resource, details | 操作审计日志 |
 
-### 角色模型（Role）
+### 消息与引用结构
 
-| 字段名 | 类型 | 描述 |
+**Chat.messages 消息对象**：
+| 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `_id` | ObjectId | 角色 ID |
-| `name` | String | 角色名称 |
-| `permissions` | Array<String> | 权限列表 |
-| `createdAt` | Date | 创建时间 |
-| `updatedAt` | Date | 更新时间 |
+| role | String | 消息角色（user/assistant） |
+| content | String | 消息内容 |
+| timestamp | Date | 消息时间 |
+| references | Array | 引用文档片段列表 |
 
-### 知识库模型（KnowledgeBase）
-
-| 字段名 | 类型 | 描述 |
+**references 引用对象**：
+| 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `_id` | ObjectId | 知识库 ID |
-| `name` | String | 知识库名称 |
-| `description` | String | 知识库描述 |
-| `owner` | String | 所有者 ID |
-| `accessControl` | Array<Object> | 访问控制列表 |
-| `documentCount` | Number | 文档数量 |
-| `createdAt` | Date | 创建时间 |
-| `updatedAt` | Date | 更新时间 |
-
-### 文档模型（Document）
-
-| 字段名 | 类型 | 描述 |
-| --- | --- | --- |
-| `_id` | ObjectId | 文档 ID |
-| `knowledgeBaseId` | String | 所属知识库 ID |
-| `name` | String | 文档名称 |
-| `type` | String | 文档类型 |
-| `size` | Number | 文档大小 |
-| `path` | String | 存储路径 |
-| `metadata` | Object | 文档元数据 |
-| `vectorCount` | Number | 向量数量 |
-| `createdAt` | Date | 创建时间 |
-| `updatedAt` | Date | 更新时间 |
-
-### 对话模型（Chat）
-
-| 字段名 | 类型 | 描述 |
-| --- | --- | --- |
-| `_id` | ObjectId | 对话 ID |
-| `userId` | String | 用户 ID |
-| `knowledgeBaseId` | String | 知识库 ID |
-| `messages` | Array<Object> | 消息列表 |
-| `createdAt` | Date | 创建时间 |
-| `updatedAt` | Date | 更新时间 |
-
-### 日志模型（Log）
-
-| 字段名 | 类型 | 描述 |
-| --- | --- | --- |
-| `_id` | ObjectId | 日志 ID |
-| `userId` | String | 用户 ID |
-| `action` | String | 操作类型 |
-| `resource` | String | 操作资源 |
-| `details` | Object | 操作详情 |
-| `ip` | String | 操作 IP |
-| `createdAt` | Date | 创建时间 |
+| documentId | ObjectId | 引用的文档 ID |
+| documentName | String | 引用的文档名称 |
+| content | String | 引用的文档内容片段 |
 
 ---
 
 ## 📋 核心流程设计
 
+> 详细实现状态请参考 [development-plan.md](development-plan.md#模块划分与任务分解)
+
 ### 文档处理流程
 
-1. **文档上传**：用户通过 API 上传文档，支持多种格式
-2. **格式解析**：使用 LlamaIndex.TS 解析不同格式的文档，提取文本内容
-3. **OCR 处理**：对扫描件和图片进行 OCR 识别，提取文本
-4. **语义分块**：基于语义进行智能分块，提高检索准确性
-5. **向量化处理**：使用嵌入模型将文本转换为向量
-6. **存储**：将向量存储到 LanceDB，元数据存储到 MongoDB
-7. **索引更新**：更新知识库索引，确保检索的实时性
+1. **文档上传** ✅：用户通过 API 上传文档，支持多种格式
+2. **格式解析** ✅：解析不同格式的文档，提取文本内容
+3. **OCR 处理** ⏸️：对扫描件和图片进行 OCR 识别（未实现）
+4. **语义分块** ✅：基于 SentenceSplitter 进行智能分块
+5. **向量化处理** ✅：使用 Ollama 嵌入模型将文本转换为向量
+6. **存储** ✅：向量存储到 LanceDB，元数据存储到 MongoDB
+7. **索引更新** ✅：更新知识库索引，确保检索的实时性
 
 ### 对话流程
 
-1. **用户提问**：用户发送问题到 API
-2. **权限验证**：验证用户是否有权限访问指定知识库
-3. **智能查询重写**：优化用户查询，提高检索效果
-4. **混合检索**：结合向量检索和 BM25 检索，获取相关文档片段
-5. **重排序**：使用重排序模型对检索结果进行二次排序
-6. **上下文构建**：构建 LLM 上下文，包含检索结果和对话历史
-7. **LLM 生成**：调用本地 Ollama 模型生成回答
-8. **引用溯源**：在回答中添加原文引用，提高可信度
-9. **返回结果**：流式返回回答结果
-10. **对话历史**：保存对话历史到 MongoDB
+1. **用户提问** ✅：用户发送问题到 API
+2. **权限验证** ✅：验证用户是否有权限访问指定知识库
+3. **智能查询重写** ⏸️：优化用户查询，提高检索效果（后续迭代）
+4. **混合检索** ✅：结合向量检索和 BM25 检索，获取相关文档片段
+5. **重排序** ⏸️：使用重排序模型对检索结果进行二次排序（后续迭代）
+6. **上下文构建** ✅：构建 LLM 上下文，包含检索结果和对话历史
+7. **LLM 生成** ✅：调用本地 Ollama 模型生成回答，流式响应
+8. **引用溯源** ⏸️：在回答中添加原文引用，提高可信度（后续迭代）
+9. **返回结果** ✅：流式返回回答结果
+10. **对话历史** ✅：保存对话历史到 MongoDB
 
 ### 权限控制流程
 
-1. **用户登录**：用户提供 credentials，获取 Token
-2. **Token 验证**：每次请求验证 Token 有效性
-3. **权限检查**：根据用户角色和权限列表，检查是否有权限执行操作
-4. **资源访问控制**：检查用户是否有权限访问指定资源（如知识库、文档）
-5. **审计日志**：记录用户操作，便于追溯和审计
+1. **用户登录** ✅：用户提供 credentials，获取 Token
+2. **Token 验证** ✅：每次请求验证 Token 有效性
+3. **权限检查** ✅：根据用户角色和权限列表，检查是否有权限执行操作
+4. **资源访问控制** ✅：检查用户是否有权限访问指定资源
+5. **审计日志** ⏳：记录用户操作，便于追溯和审计（部分实现）
 
 ---
 
@@ -298,7 +259,7 @@
 
 ### JWT 令牌使用方式
 
-1. **获取令牌**：通过登录接口 `POST /api/v1/auth/login` 获取 JWT 令牌
+1. **获取令牌**：通过登录接口 `POST /api/v1/auth/login` 获取 JWT 令牌（有效期 24h）
 2. **携带令牌**：在请求头中添加 `Authorization` 字段，格式为 `Bearer <token>`
 3. **访问受保护资源**：使用携带令牌的请求访问需要认证的接口，如 `GET /api/v1/auth/user-info`
 4. **登出**：通过登出接口 `POST /api/v1/auth/logout` 使令牌失效
