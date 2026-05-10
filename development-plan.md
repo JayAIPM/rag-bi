@@ -503,8 +503,12 @@ Express 作为代理同时处理请求和响应时，默认会缓冲响应数据
 
 **优化8：禁用 LLM 思考模式** ✅
 - 问题描述：qwen3.5:4b 模型思考阶段存在重复循环，导致响应时间过长
-- 优化思路：添加 `"think": false` 参数禁用思考模式
-- 状态：已完成，已添加到 `ask` 和 `askStream` 两个方法的 Ollama 请求中
+- 优化思路：通过 Ollama API 的 `think: false` 参数禁用思考模式
+- 状态：已完成
+  1. 使用原模型 `qwen3.5:4b`
+  2. 在 `ask` 和 `askStream` 方法的 API 请求中添加 `"think": false` 参数
+  3. 修改 `src/config/llm.js` 使用原模型
+- 说明：Modelfile 自定义模型方案无效，Ollama API 的 `think` 参数是唯一有效方案
 
 ### 7. 用户管理模块
 
