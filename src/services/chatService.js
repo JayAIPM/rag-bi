@@ -172,6 +172,7 @@ function parseOllamaStreamData(rawData) {
     }
     return {
       content: data.message?.content || '',
+      thinking: data.message?.thinking || null,
       done: data.done || false,
     };
   } catch (e) {
@@ -201,6 +202,10 @@ function handleStreamData(state, chunk, onChunk, onEnd, resolve, reject) {
       reject(new Error(parsed.error));
     }
     return;
+  }
+
+  if (parsed.thinking && onChunk) {
+    onChunk(JSON.stringify({ code: 0, msg: 'success', data: { type: 'thinking', content: parsed.thinking } }));
   }
 
   state.fullAnswer += parsed.content;
@@ -450,6 +455,7 @@ const chatService = {
           model: chatModel,
           messages: [{ role: "user", content: prompt }],
           stream: false,
+          think: false,
         }),
         signal: controller.signal,
       });
@@ -553,6 +559,7 @@ const chatService = {
             model: chatModel,
             messages: [{ role: "user", content: prompt }],
             stream: true,
+            think: false,
           })
         );
 

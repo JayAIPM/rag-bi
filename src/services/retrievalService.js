@@ -87,14 +87,13 @@ const retrievalService = {
   },
 
   async hybridSearch(query, options = {}) {
-    const { knowledgeBaseId, limit = 10, k = 60 } = options;
+    const { knowledgeBaseId, limit = 3, k = 60 } = options;
     logger.info(`Hybrid searching for query: "${query}", knowledgeBaseId: ${knowledgeBaseId || 'all'}, limit: ${limit}, k: ${k}`);
 
-    // 并行执行向量检索和BM25检索
     logger.info('Step 1: Executing parallel searches');
     const [vectorResults, bm25Results] = await Promise.all([
-      this.search(query, { knowledgeBaseId, limit: 20 }),
-      this.bm25Search(query, { knowledgeBaseId, limit: 20 })
+      this.search(query, { knowledgeBaseId, limit: 10 }),
+      this.bm25Search(query, { knowledgeBaseId, limit: 10 })
     ]);
 
     // RRF融合
