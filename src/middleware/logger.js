@@ -7,7 +7,11 @@ const requestLogger = (req, res, next) => {
   res.on('finish', () => {
     const duration = Date.now() - start;
     const { statusCode } = res;
-    
+
+    if (statusCode >= 400 && res.locals.errorLogged) {
+      return;
+    }
+
     const logInfo = {
       method,
       url: originalUrl,
@@ -16,7 +20,7 @@ const requestLogger = (req, res, next) => {
       ip,
       userAgent: req.get('User-Agent')
     };
-    
+
     if (statusCode >= 400) {
       logger.warn(`Request ${method} ${originalUrl} ${statusCode} ${duration}ms`, logInfo);
     } else {
@@ -29,14 +33,14 @@ const requestLogger = (req, res, next) => {
 
 const errorLogger = (err, req, res, next) => {
   const { method, originalUrl, ip } = req;
-  
+
   let stack = err.stack;
   if (stack) {
     stack = stack.split('\n').filter(line => {
       return !line.includes('node_modules') && !line.includes('internal/');
     }).slice(0, 2).join('\n');
   }
-  
+
   logger.error({
     level: 'error',
     message: err.message,
@@ -46,7 +50,8 @@ const errorLogger = (err, req, res, next) => {
     ip: ip,
     stack: stack
   });
-  
+
+  res.locals.errorLogged = true;
   next(err);
 };
 

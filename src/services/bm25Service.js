@@ -146,7 +146,7 @@ const bm25Service = {
       const chunksToDelete = this.documentChunks.filter(chunk => chunk.documentId === documentId);
       
       chunksToDelete.forEach(chunk => {
-        this.miniSearch.delete(chunk.id);
+        this.miniSearch.discard(chunk.id);
       });
       
       this.documentChunks = this.documentChunks.filter(chunk => chunk.documentId !== documentId);
