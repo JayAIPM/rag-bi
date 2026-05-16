@@ -510,6 +510,22 @@ Express 作为代理同时处理请求和响应时，默认会缓冲响应数据
   3. 修改 `src/config/llm.js` 使用原模型
 - 说明：Modelfile 自定义模型方案无效，Ollama API 的 `think` 参数是唯一有效方案
 
+**优化9：修复对话记录重复保存问题** ✅
+- 问题描述：对话记录在 MongoDB 中出现重复的 `assistant` 消息
+- 问题原因：
+  1. `updateChatAnswer` 使用 `$push` 操作符追加消息
+  2. 流式结束时，`handleStreamEnd`、`handleStreamError`、`handleStreamTimeout` 都可能调用保存
+  3. 某些场景下保存被触发多次，导致重复消息
+- 优化思路（D 方案）：添加状态控制
+  1. 在 Controller 层添加 `saved` 标志和 `markSaved` 回调
+  2. 在 `askStream` 方法中，保存初始对话后调用 `markSaved()`
+  3. 在 Service 层各个 handler 中，保存前检查 `state.saved` 标志
+  4. 保存成功后设置 `state.saved = true` 并调用 `markSaved()`
+- 涉及文件：
+  - `src/controllers/chatController.js` - 添加 `saved` 标志和 `markSaved` 回调
+  - `src/services/chatService.js` - 修改 `askStream`、`handleStreamData`、`handleStreamEnd`、`handleStreamError`、`handleStreamTimeout` 及 `cancel` 函数
+- 状态：已完成，等待人工复核
+
 ### 7. 用户管理模块
 
 - [ ] 实现用户列表接口

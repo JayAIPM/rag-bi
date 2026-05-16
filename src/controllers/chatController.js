@@ -59,6 +59,9 @@ const chatController = {
 
     res.flushHeaders();
 
+    let saved = false;
+    const markSaved = () => { saved = true; };
+
     const sendChunk = (data) => {
       res.write(`data: ${data}\n\n`);
     };
@@ -68,7 +71,7 @@ const chatController = {
     };
 
     try {
-      const { promise, cancel } = chatService.askStream(query, { userId, knowledgeBaseId, onChunk: sendChunk, onEnd: sendEnd });
+      const { promise, cancel } = chatService.askStream(query, { userId, knowledgeBaseId, onChunk: sendChunk, onEnd: sendEnd, markSaved });
 
       res.socket.on('close', (hadError) => {
         logger.info('Socket closed (hadError:', hadError, ')');

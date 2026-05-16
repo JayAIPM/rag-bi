@@ -188,8 +188,9 @@ function parseOllamaStreamData(rawData) {
  * @param {Function} onEnd - 结束回调
  * @param {Function} resolve - Promise resolve 函数
  * @param {Function} reject - Promise reject 函数
+ * @param {Function} markSaved - 保存完成回调
  */
-function handleStreamData(state, chunk, onChunk, onEnd, resolve, reject) {
+function handleStreamData(state, chunk, onChunk, onEnd, resolve, reject, markSaved) {
   resetIdleTimeout(state, onChunk, onEnd, () => {});
   const rawData = chunk.toString();
   const parsed = parseOllamaStreamData(rawData);
@@ -217,8 +218,11 @@ function handleStreamData(state, chunk, onChunk, onEnd, resolve, reject) {
     if (onChunk) {
       onChunk(JSON.stringify({ code: 0, msg: 'success', data: { type: 'content', content: '\n\n[内容已截断，超过最大长度限制]\n\n' } }));
     }
-    if (state.chatId) {
-      chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).catch(e => logger.error('Update truncated answer failed:', e));
+    if (state.chatId && !state.saved) {
+      chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).then(() => {
+        state.saved = true;
+        if (markSaved) markSaved();
+      }).catch(e => logger.error('Update truncated answer failed:', e));
     }
     if (onEnd) onEnd();
     resolve({ chatId: state.chatId, truncated: true });
@@ -237,11 +241,13 @@ function handleStreamData(state, chunk, onChunk, onEnd, resolve, reject) {
  * @param {Function} onEnd - 结束回调
  * @param {Function} resolve - Promise resolve 函数
  */
-async function handleStreamEnd(state, onChunk, onEnd, resolve) {
+async function handleStreamEnd(state, onChunk, onEnd, resolve, markSaved) {
   clearIdleTimeout(state);
   if (state.chatId && state.fullAnswer && !state.saved) {
     try {
       await chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks);
+      state.saved = true;
+      if (markSaved) markSaved();
     } catch (e) {
       logger.error("Update chat answer failed:", e);
     }
@@ -259,11 +265,14 @@ async function handleStreamEnd(state, onChunk, onEnd, resolve) {
  * @param {Function} onEnd - 结束回调
  * @param {Function} reject - Promise reject 函数
  */
-function handleStreamError(state, err, onChunk, onEnd, reject) {
+function handleStreamError(state, err, onChunk, onEnd, reject, markSaved) {
   clearIdleTimeout(state);
   logger.error("Ollama request error:", err);
-  if (state.chatId && state.fullAnswer) {
-    chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).catch(e => logger.error('Update partial answer (error) failed:', e));
+  if (state.chatId && state.fullAnswer && !state.saved) {
+    chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).then(() => {
+      state.saved = true;
+      if (markSaved) markSaved();
+    }).catch(e => logger.error('Update partial answer (error) failed:', e));
   }
   if (onChunk) onChunk(JSON.stringify({ code: 500, msg: err.message, data: null }));
   if (onEnd) onEnd();
@@ -277,12 +286,15 @@ function handleStreamError(state, err, onChunk, onEnd, reject) {
  * @param {Function} onEnd - 结束回调
  * @param {Function} reject - Promise reject 函数
  */
-function handleStreamTimeout(state, onChunk, onEnd, reject) {
+function handleStreamTimeout(state, onChunk, onEnd, reject, markSaved) {
   clearIdleTimeout(state);
   logger.error("Ollama request timeout");
   state.ollamaReq.destroy();
-  if (state.chatId && state.fullAnswer) {
-    chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).catch(e => logger.error('Update partial answer (timeout) failed:', e));
+  if (state.chatId && state.fullAnswer && !state.saved) {
+    chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).then(() => {
+      state.saved = true;
+      if (markSaved) markSaved();
+    }).catch(e => logger.error('Update partial answer (timeout) failed:', e));
   }
   if (onChunk) onChunk(JSON.stringify({ code: 500, msg: "LLM 请求超时", data: null }));
   if (onEnd) onEnd();
@@ -494,7 +506,7 @@ const chatService = {
    * @returns {Object} 包含 promise 和 cancel 的对象
    */
   askStream(query, options = {}) {
-    const { userId, knowledgeBaseId, topK = defaultTopK, onChunk, onEnd } = options;
+    const { userId, knowledgeBaseId, topK = defaultTopK, onChunk, onEnd, markSaved } = options;
 
     let cancel;
 
@@ -512,6 +524,7 @@ const chatService = {
       if (userId) {
         const chat = await this.saveChat(userId, knowledgeBaseId, query, null, chunks);
         chatId = chat._id;
+        if (markSaved) markSaved();
       }
 
       const prompt = buildPrompt(query, chunks);
@@ -527,8 +540,11 @@ const chatService = {
           if (state.ollamaReq) {
             state.ollamaReq.destroy();
           }
-          if (state.chatId && state.fullAnswer) {
-            this.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).catch(e => logger.error('Update partial answer (client disconnect) failed:', e));
+          if (state.chatId && state.fullAnswer && !state.saved) {
+            this.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).then(() => {
+              state.saved = true;
+              if (markSaved) markSaved();
+            }).catch(e => logger.error('Update partial answer (client disconnect) failed:', e));
           }
         };
 
@@ -536,20 +552,20 @@ const chatService = {
           resetIdleTimeout(state, onChunk, onEnd, reject);
 
           ollamaRes.on("data", (chunk) => {
-            handleStreamData(state, chunk, onChunk, onEnd, resolve);
+            handleStreamData(state, chunk, onChunk, onEnd, resolve, reject, markSaved);
           });
 
           ollamaRes.on("end", async () => {
-            await handleStreamEnd(state, onChunk, onEnd, resolve);
+            await handleStreamEnd(state, onChunk, onEnd, resolve, markSaved);
           });
         });
 
         state.ollamaReq.on("error", (err) => {
-          handleStreamError(state, err, onChunk, onEnd, reject);
+          handleStreamError(state, err, onChunk, onEnd, reject, markSaved);
         });
 
         state.ollamaReq.on("timeout", () => {
-          handleStreamTimeout(state, onChunk, onEnd, reject);
+          handleStreamTimeout(state, onChunk, onEnd, reject, markSaved);
         });
 
         state.ollamaReq.setTimeout(llmTimeout);
