@@ -79,24 +79,31 @@ curl -X POST http://localhost:3000/api/v1/knowledge \
 
 **请求参数** (Body):
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
-| --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | query | String | 是 | - | 用户问题 |
 | knowledgeBaseId | String | 否 | null | 知识库 ID，用于限定问答范围，不传则查询所有知识库 |
+| chatId | String | 否 | null | 对话 ID，用于多轮对话，不传则新建对话 |
 
 **测试命令**:
 
 ```bash
-# 不指定知识库
+# 不指定知识库（新建对话）
 curl -X POST http://localhost:3000/api/v1/chat/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{"query": "请介绍一下本项目"}'
 
-# 指定知识库
+# 指定知识库（新建对话）
 curl -X POST http://localhost:3000/api/v1/chat/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{"query": "请介绍一下本项目", "knowledgeBaseId": "<knowledgeBaseId>"}'
+
+# 多轮对话（携带 chatId，追加到已有对话）
+curl -X POST http://localhost:3000/api/v1/chat/ask \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"query": "那加班政策呢？", "chatId": "<上一轮返回的chatId>"}'
 ```
 
 **成功响应** (200):
@@ -162,9 +169,10 @@ curl -X POST http://localhost:3000/api/v1/chat/ask \
 
 **请求参数** (Body):
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
-| --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | query | String | 是 | - | 用户问题 |
 | knowledgeBaseId | String | 否 | null | 知识库 ID，用于限定问答范围，不传则查询所有知识库 |
+| chatId | String | 否 | null | 对话 ID，用于多轮对话，不传则新建对话 |
 
 **测试命令**:
 
@@ -174,19 +182,40 @@ curl -X POST http://localhost:3000/api/v1/chat/ask/stream \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{"query": "请介绍一下本项目"}'
+
+# 多轮对话（携带 chatId，追加到已有对话）
+curl -X POST http://localhost:3000/api/v1/chat/ask/stream \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"query": "那加班政策呢？", "chatId": "<上一轮返回的chatId>"}'
 ```
 
 **流式响应格式** (Server-Sent Events):
+
+每个数据块都是一个 JSON 字符串，格式如下：
+
 ```
-data: "第1段内容
+data: {"code":0,"msg":"success","data":{"type":"content","content":"第1段内容"}}
 
-data: "第2段内容
+data: {"code":0,"msg":"success","data":{"type":"content","content":"第2段内容"}}
 
-data: "完整回答
+data: {"code":0,"msg":"success","data":{"type":"content","content":"第3段内容"}}
 
 ...
 
-data: "[DONE]
+data: {"code":0,"msg":"success","data":{"type":"end","chatId":"60d21b4667d0d8992e610c85"}}
+```
+
+**data.type 说明**:
+| type | 说明 |
+| --- | --- |
+| `content` | 普通内容片段 |
+| `thinking` | 思考过程（可选） |
+| `end` | 结束信号，包含 chatId |
+
+**错误响应**:
+```
+data: {"code":500,"msg":"错误信息","data":null}
 ```
 
 ---
@@ -368,6 +397,9 @@ curl -X DELETE http://localhost:3000/api/v1/chat/<chatId> \
 | 删除自己的对话 | 删除成功 |
 | 删除他人的对话 | 返回 404 错误 |
 | 删除不存在的对话 | 返回 404 错误 |
+| 多轮对话（非流式） | 新消息追加到已有对话，messageCount 增加 |
+| 多轮对话（流式） | 新消息追加到已有对话，messageCount 增加 |
+| 多轮对话带上下文 | LLM 能理解历史对话并正确回复 |
 
 ---
 

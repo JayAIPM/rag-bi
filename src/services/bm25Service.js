@@ -16,7 +16,7 @@ const bm25Service = {
     
     this.miniSearch = new MiniSearch({
       fields: ['content', 'title'],
-      storeFields: ['id', 'documentId', 'chunkIndex', 'content', 'title', 'start', 'end'],
+      storeFields: ['id', 'documentId', 'documentName', 'chunkIndex', 'content', 'title', 'start', 'end'],
       tokenize: tokenize
     });
     
@@ -34,6 +34,7 @@ const bm25Service = {
     const documents = chunks.map((chunk, index) => ({
       id: chunk.id || `${chunk.documentId}_${index}`,
       documentId: chunk.documentId,
+      documentName: chunk.documentName || '',
       chunkIndex: chunk.chunkIndex || index,
       content: chunk.content,
       title: chunk.title || '',
@@ -74,6 +75,7 @@ const bm25Service = {
       return results.map(result => ({
         id: result.id,
         documentId: result.documentId,
+        documentName: result.documentName || '',
         chunkIndex: result.chunkIndex,
         content: result.content,
         title: result.title,
@@ -117,6 +119,7 @@ const bm25Service = {
       const chunks = allChunks.map(chunk => ({
         id: chunk.id,
         documentId: chunk.documentId,
+        documentName: chunk.documentName || '',
         chunkIndex: chunk.chunkIndex,
         content: chunk.content,
         title: chunk.title || '',

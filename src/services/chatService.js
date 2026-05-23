@@ -1,6 +1,7 @@
 const http = require("http");
 const retrievalService = require("./retrievalService");
 const Chat = require("../models/Chat");
+const Document = require("../models/Document");
 const logger = require("../utils/logger");
 const { LLM_CONFIG, RETRIEVAL_CONFIG, SYSTEM_PROMPT } = require("../config/llm");
 const { LLMTimeoutError, LLMConnectionError, StreamInterruptedError } = require("../utils/error");
@@ -61,6 +62,52 @@ ${query}
 }
 
 /**
+ * 构建带历史对话的上下文
+ * @param {Array} historyMessages - 历史对话消息数组
+ * @returns {string} 格式化的历史对话字符串
+ */
+function buildHistoryContext(historyMessages) {
+  if (!historyMessages || historyMessages.length === 0) {
+    return '';
+  }
+  
+  return historyMessages
+    .map(msg => {
+      const role = msg.role === 'user' ? '用户' : '助手';
+      return `[${role}]\n${msg.content}`;
+    })
+    .join('\n\n');
+}
+
+/**
+ * 构建带历史对话的 Prompt
+ * @param {string} query - 用户问题
+ * @param {Array} chunks - 检索到的文档块
+ * @param {Array} historyMessages - 历史对话消息数组（可选）
+ * @returns {string} 完整的 Prompt
+ */
+function buildPromptWithHistory(query, chunks, historyMessages) {
+  const context = buildContext(chunks);
+  const historyContext = buildHistoryContext(historyMessages);
+  
+  let historySection = '';
+  if (historyContext) {
+    historySection = `\n【对话历史】
+${historyContext}`;
+  }
+  
+  return `${SYSTEM_PROMPT}${historySection}
+
+【参考信息】
+${context}
+
+【用户问题】
+${query}
+
+【回答】`;
+}
+
+/**
  * 从回答中提取引用
  * @param {string} answer - LLM 回答
  * @param {Array} chunks - 检索到的文档块
@@ -71,14 +118,20 @@ function extractReferences(answer, chunks) {
   const referencePattern = /\[(\d+)\]/g;
   const usedIndices = new Set();
   let match;
+
   while ((match = referencePattern.exec(answer)) !== null) {
     const index = parseInt(match[1], 10) - 1;
+    const startIndex = match.index;
+    const endIndex = match.index + match[0].length;
+
     if (index >= 0 && index < chunks.length && !usedIndices.has(index)) {
       usedIndices.add(index);
       references.push({
         documentId: chunks[index].documentId || null,
         documentName: chunks[index].documentName || "未知文档",
         content: chunks[index].content || "",
+        startIndex,
+        endIndex,
       });
     }
   }
@@ -315,8 +368,20 @@ const chatService = {
     const { knowledgeBaseId, topK = defaultTopK } = options;
     logger.info(`Building context for query: ${query}`);
     const chunks = await retrievalService.hybridSearch(query, { knowledgeBaseId, topK });
-    logger.info(`Retrieved ${chunks.length} chunks for context`);
-    return chunks;
+    
+    // 根据 documentId 查询文档名称
+    const documentIds = [...new Set(chunks.map(c => c.documentId))];
+    const documents = await Document.find({ _id: { $in: documentIds } }).select('name');
+    const docNameMap = new Map(documents.map(d => [d._id.toString(), d.name]));
+    
+    // 为每个 chunk 补充 documentName
+    const chunksWithNames = chunks.map(chunk => ({
+      ...chunk,
+      documentName: docNameMap.get(chunk.documentId) || '未知文档'
+    }));
+    
+    logger.info(`Retrieved ${chunksWithNames.length} chunks for context`);
+    return chunksWithNames;
   },
 
   /**
@@ -326,17 +391,36 @@ const chatService = {
    * @param {string} query - 用户问题
    * @param {string} answer - AI 回答
    * @param {Array} chunks - 检索到的文档块
+   * @param {string} chatId - 对话 ID（可选，用于多轮对话时追加消息）
    * @returns {Promise<Object>} 保存的对话对象
    */
-  async saveChat(userId, knowledgeBaseId, query, answer, chunks) {
-    const title = generateTitle(query);
+  async saveChat(userId, knowledgeBaseId, query, answer, chunks, chatId = null) {
     const references = answer ? extractReferences(answer, chunks) : [];
+    const userMessage = { role: "user", content: query };
+    const assistantMessage = answer ? { role: "assistant", content: answer, references } : null;
+    
+    if (chatId) {
+      const existingChat = await Chat.findOne({ _id: chatId, userId });
+      if (existingChat) {
+        existingChat.messages.push(userMessage);
+        if (assistantMessage) {
+          existingChat.messages.push(assistantMessage);
+        }
+        existingChat.messageCount = existingChat.messages.length;
+        existingChat.updatedAt = new Date();
+        await existingChat.save();
+        logger.info(`Chat updated: ${existingChat._id}, total messages: ${existingChat.messageCount}`);
+        return existingChat;
+      }
+    }
+    
+    const title = generateTitle(query);
     const chat = new Chat({
       userId,
       knowledgeBaseId: knowledgeBaseId || null,
       title,
       messageCount: answer ? 2 : 1,
-      messages: [{ role: "user", content: query }, ...(answer ? [{ role: "assistant", content: answer, references }] : [])],
+      messages: [userMessage, ...(assistantMessage ? [assistantMessage] : [])],
     });
     await chat.save();
     logger.info(`Chat saved: ${chat._id}`);
@@ -442,20 +526,32 @@ const chatService = {
    * @returns {Promise<Object>} 回答结果
    */
   async ask(query, options = {}) {
-    const { userId, knowledgeBaseId, topK = defaultTopK } = options;
+    const { userId, knowledgeBaseId, chatId, topK = defaultTopK } = options;
+    
+    let historyMessages = [];
+    if (chatId) {
+      const historyChat = await this.getChatById(chatId, userId);
+      if (historyChat) {
+        historyMessages = historyChat.messages;
+        logger.info(`Loaded ${historyMessages.length} historical messages for chat ${chatId}`);
+      }
+    }
+    
     const chunks = await this.buildContext(query, { knowledgeBaseId, topK });
 
     if (chunks.length === 0) {
       if (userId) {
-        const chat = await this.saveChat(userId, knowledgeBaseId, query, null, []);
+        const chat = await this.saveChat(userId, knowledgeBaseId, query, null, [], chatId);
         return { query, chunks: [], answer: null, references: [], message: "暂无相关信息", chatId: chat._id };
       }
       return { query, chunks: [], answer: null, references: [], message: "暂无相关信息" };
     }
 
-    const prompt = buildPrompt(query, chunks);
+    const promptWithHistory = buildPromptWithHistory(query, chunks, historyMessages);
+    
+    const prompt = promptWithHistory;
     logger.info("Sending prompt to LLM...");
-
+    
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), llmTimeout);
 
@@ -483,13 +579,13 @@ const chatService = {
       logger.info("Received answer from LLM");
 
       const references = extractReferences(answer, chunks);
-      let chatId = null;
+      let savedChatId = chatId || null;
       if (userId) {
-        const chat = await this.saveChat(userId, knowledgeBaseId, query, answer, chunks);
-        chatId = chat._id;
+        const chat = await this.saveChat(userId, knowledgeBaseId, query, answer, chunks, chatId);
+        savedChatId = chat._id;
       }
 
-      return { query, chunks, answer, references, message: null, chatId };
+      return { query, chunks, answer, references, message: null, chatId: savedChatId };
     } catch (error) {
       clearTimeout(timeoutId);
       if (error.name === "AbortError") {
@@ -506,34 +602,45 @@ const chatService = {
    * @returns {Object} 包含 promise 和 cancel 的对象
    */
   askStream(query, options = {}) {
-    const { userId, knowledgeBaseId, topK = defaultTopK, onChunk, onEnd, markSaved } = options;
+    const { userId, knowledgeBaseId, chatId: inputChatId, topK = defaultTopK, onChunk, onEnd, markSaved } = options;
 
     let cancel;
 
     const promise = (async () => {
+      let historyMessages = [];
+      if (inputChatId) {
+        const historyChat = await this.getChatById(inputChatId, userId);
+        if (historyChat) {
+          historyMessages = historyChat.messages;
+          logger.info(`Loaded ${historyMessages.length} historical messages for chat ${inputChatId}`);
+        }
+      }
+      
       const chunks = await this.buildContext(query, { knowledgeBaseId, topK });
 
       if (chunks.length === 0) {
         if (onChunk) onChunk(JSON.stringify({ code: 0, msg: 'success', data: { type: 'end', content: '暂无相关信息' } }));
         if (onEnd) onEnd();
-        if (userId) await this.saveChat(userId, knowledgeBaseId, query, null, []);
-        return { chatId: null };
+        if (userId) await this.saveChat(userId, knowledgeBaseId, query, null, [], inputChatId);
+        return { chatId: inputChatId };
       }
 
-      let chatId = null;
+      let savedChatId = inputChatId || null;
       if (userId) {
-        const chat = await this.saveChat(userId, knowledgeBaseId, query, null, chunks);
-        chatId = chat._id;
+        const chat = await this.saveChat(userId, knowledgeBaseId, query, null, chunks, inputChatId);
+        savedChatId = chat._id;
         if (markSaved) markSaved();
       }
 
-      const prompt = buildPrompt(query, chunks);
+      const promptWithHistory = buildPromptWithHistory(query, chunks, historyMessages);
+      
+      const prompt = promptWithHistory;
       logger.info("Sending prompt to LLM (streaming)...");
 
       const requestOptions = createOllamaRequestOptions();
 
       return new Promise((resolve, reject) => {
-        const state = createStreamState(chatId, chunks);
+        const state = createStreamState(savedChatId, chunks);
 
         cancel = () => {
           clearIdleTimeout(state);

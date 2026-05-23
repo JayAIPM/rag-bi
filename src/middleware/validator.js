@@ -160,6 +160,9 @@ const askSchema = Joi.object({
   }),
   knowledgeBaseId: Joi.string().trim().messages({
     'string.base': '知识库ID必须是字符串'
+  }),
+  chatId: Joi.string().trim().messages({
+    'string.base': '对话ID必须是字符串'
   })
 });
 

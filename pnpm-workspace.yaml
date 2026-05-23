@@ -1,0 +1,3 @@
+allowBuilds:
+  nodejieba: true
+  tree-sitter: false

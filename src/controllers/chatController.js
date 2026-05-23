@@ -12,10 +12,10 @@ const chatController = {
    * @param {Object} res - 响应对象
    */
   async ask(req, res) {
-    const { query, knowledgeBaseId } = req.body;
+    const { query, knowledgeBaseId, chatId } = req.body;
     const { userId } = req.user;
 
-    const result = await chatService.ask(query, { userId, knowledgeBaseId });
+    const result = await chatService.ask(query, { userId, knowledgeBaseId, chatId });
 
     if (result.message === '暂无相关信息') {
       res.json({
@@ -49,7 +49,7 @@ const chatController = {
    * @param {Object} res - 响应对象
    */
   async askStream(req, res) {
-    const { query, knowledgeBaseId } = req.body;
+    const { query, knowledgeBaseId, chatId } = req.body;
     const { userId } = req.user;
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -71,7 +71,7 @@ const chatController = {
     };
 
     try {
-      const { promise, cancel } = chatService.askStream(query, { userId, knowledgeBaseId, onChunk: sendChunk, onEnd: sendEnd, markSaved });
+      const { promise, cancel } = chatService.askStream(query, { userId, knowledgeBaseId, chatId, onChunk: sendChunk, onEnd: sendEnd, markSaved });
 
       res.socket.on('close', (hadError) => {
         logger.info('Socket closed (hadError:', hadError, ')');

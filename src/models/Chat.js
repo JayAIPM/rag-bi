@@ -40,8 +40,20 @@ const chatSchema = new mongoose.Schema({
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Document'
           },
+          documentName: {
+            type: String,
+            default: ''
+          },
           content: {
             type: String
+          },
+          startIndex: {
+            type: Number,
+            default: null
+          },
+          endIndex: {
+            type: Number,
+            default: null
           }
         }],
         default: []
