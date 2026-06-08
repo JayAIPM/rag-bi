@@ -66,7 +66,13 @@ const vectorStoreService = {
         start: Number(chunk.start),
         end: Number(chunk.end),
         title: String(chunk.title || ''),
-        level: Number(chunk.level || 0)
+        level: Number(chunk.level || 0),
+        // 新增字段，确保与旧数据 schema 兼容
+        chunkType: String(chunk.chunkType || 'child'),
+        parentId: String(chunk.parentId || ''),
+        nodeType: String(chunk.nodeType || 'text'),
+        hierarchyPath: String(chunk.hierarchyPath || ''),
+        parentContent: String(chunk.parentContent || '')
       }));
 
       const tables = await this.db.tableNames();

@@ -2,6 +2,8 @@ const logger = require('../utils/logger');
 const embeddingService = require('./embeddingService');
 const vectorStoreService = require('./vectorStoreService');
 const bm25Service = require('./bm25Service');
+const queryRewriteService = require('./queryRewriteService');
+const rerankService = require('./rerankService');
 
 const rrfFusion = (vectorResults, bm25Results, options = {}) => {
   const { k = 60 } = options;
@@ -90,18 +92,27 @@ const retrievalService = {
     const { knowledgeBaseId, limit = 3, k = 60 } = options;
     logger.info(`Hybrid searching for query: "${query}", knowledgeBaseId: ${knowledgeBaseId || 'all'}, limit: ${limit}, k: ${k}`);
 
+    // Step 0: 智能查询重写（使用 deepseek-r1:8b）
+    const rewrittenQuery = await queryRewriteService.rewriteQuery(query);
+    if (rewrittenQuery !== query) {
+      logger.info(`Query rewritten: "${query}" -> "${rewrittenQuery}"`);
+    }
+
     logger.info('Step 1: Executing parallel searches');
     const [vectorResults, bm25Results] = await Promise.all([
-      this.search(query, { knowledgeBaseId, limit: 10 }),
-      this.bm25Search(query, { knowledgeBaseId, limit: 10 })
+      this.search(rewrittenQuery, { knowledgeBaseId, limit: 10 }),
+      this.bm25Search(rewrittenQuery, { knowledgeBaseId, limit: 10 })
     ]);
 
     // RRF融合
     logger.info('Step 2: Performing RRF fusion');
     const fusedResults = rrfFusion(vectorResults, bm25Results, { k });
 
+    // Step 3: 重排序（使用 BGE-Reranker-v2-m3）
+    const rerankedResults = await rerankService.rerank(rewrittenQuery, fusedResults);
+
     // 取top-k结果
-    const finalResults = fusedResults.slice(0, limit);
+    const finalResults = rerankedResults.slice(0, limit);
     logger.info(`Hybrid search completed, ${finalResults.length} final results`);
 
     return finalResults;
@@ -111,7 +122,9 @@ const retrievalService = {
     return {
       embeddingService: embeddingService.getConfig(),
       vectorStoreService: vectorStoreService.getConfig(),
-      bm25Service: bm25Service.getStats()
+      bm25Service: bm25Service.getStats(),
+      queryRewriteService: queryRewriteService.getConfig(),
+      rerankService: rerankService.getConfig(),
     };
   }
 };

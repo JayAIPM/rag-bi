@@ -109,7 +109,9 @@ const documentService = {
         content: chunk.content,
         title: chunk.title || '',
         start: chunk.start || 0,
-        end: chunk.end || 0
+        end: chunk.end || 0,
+        hierarchyPath: chunk.hierarchyPath || '',  // 层级路径
+        parentContext: chunk.parentContext || ''    // 父级上下文
       }));
       bm25Service.addChunks(bm25Chunks);
       logger.info(`Successfully built BM25 index for document ${documentId}`);

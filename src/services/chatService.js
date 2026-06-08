@@ -1,5 +1,6 @@
 const http = require("http");
 const retrievalService = require("./retrievalService");
+const permissionService = require("./permissionService");
 const Chat = require("../models/Chat");
 const Document = require("../models/Document");
 const logger = require("../utils/logger");
@@ -37,7 +38,24 @@ function buildContext(chunks) {
     .map((chunk, index) => {
       const truncatedContent = truncateText(chunk.content || "");
       const docName = chunk.documentName || "未知文档";
-      return `[${index + 1}] ${docName}\n${truncatedContent}`;
+
+      // 构建层级信息
+      let sectionInfo = "";
+      if (chunk.hierarchyPath) {
+        sectionInfo = `【章节】${chunk.hierarchyPath}`;
+        if (chunk.parentContext) {
+          sectionInfo += `\n【上下文】${chunk.parentContext}`;
+        }
+      }
+
+      // 构建完整上下文
+      let contextBlock = `[${index + 1}] ${docName}`;
+      if (sectionInfo) {
+        contextBlock += `\n${sectionInfo}`;
+      }
+      contextBlock += `\n【内容】${truncatedContent}`;
+
+      return contextBlock;
     })
     .join("\n\n");
 }
@@ -68,15 +86,15 @@ ${query}
  */
 function buildHistoryContext(historyMessages) {
   if (!historyMessages || historyMessages.length === 0) {
-    return '';
+    return "";
   }
-  
+
   return historyMessages
-    .map(msg => {
-      const role = msg.role === 'user' ? '用户' : '助手';
+    .map((msg) => {
+      const role = msg.role === "user" ? "用户" : "助手";
       return `[${role}]\n${msg.content}`;
     })
-    .join('\n\n');
+    .join("\n\n");
 }
 
 /**
@@ -89,13 +107,13 @@ function buildHistoryContext(historyMessages) {
 function buildPromptWithHistory(query, chunks, historyMessages) {
   const context = buildContext(chunks);
   const historyContext = buildHistoryContext(historyMessages);
-  
-  let historySection = '';
+
+  let historySection = "";
   if (historyContext) {
     historySection = `\n【对话历史】
 ${historyContext}`;
   }
-  
+
   return `${SYSTEM_PROMPT}${historySection}
 
 【参考信息】
@@ -204,7 +222,7 @@ function resetIdleTimeout(state, onChunk, onEnd, reject) {
     logger.error("Stream idle timeout: no data received for", chunkTimeout, "ms");
     state.ollamaReq.destroy();
     if (state.chatId && state.fullAnswer) {
-      chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).catch(e => logger.error('Update partial answer (idle timeout) failed:', e));
+      chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).catch((e) => logger.error("Update partial answer (idle timeout) failed:", e));
     }
     if (onChunk) onChunk(JSON.stringify({ code: 500, msg: "响应超时，无数据等待过久", data: null }));
     if (onEnd) onEnd();
@@ -224,7 +242,7 @@ function parseOllamaStreamData(rawData) {
       return { error: data.error };
     }
     return {
-      content: data.message?.content || '',
+      content: data.message?.content || "",
       thinking: data.message?.thinking || null,
       done: data.done || false,
     };
@@ -259,7 +277,7 @@ function handleStreamData(state, chunk, onChunk, onEnd, resolve, reject, markSav
   }
 
   if (parsed.thinking && onChunk) {
-    onChunk(JSON.stringify({ code: 0, msg: 'success', data: { type: 'thinking', content: parsed.thinking } }));
+    onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "thinking", content: parsed.thinking } }));
   }
 
   state.fullAnswer += parsed.content;
@@ -269,13 +287,16 @@ function handleStreamData(state, chunk, onChunk, onEnd, resolve, reject, markSav
     clearIdleTimeout(state);
     state.ollamaReq.destroy();
     if (onChunk) {
-      onChunk(JSON.stringify({ code: 0, msg: 'success', data: { type: 'content', content: '\n\n[内容已截断，超过最大长度限制]\n\n' } }));
+      onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "content", content: "\n\n[内容已截断，超过最大长度限制]\n\n" } }));
     }
     if (state.chatId && !state.saved) {
-      chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).then(() => {
-        state.saved = true;
-        if (markSaved) markSaved();
-      }).catch(e => logger.error('Update truncated answer failed:', e));
+      chatService
+        .updateChatAnswer(state.chatId, state.fullAnswer, state.chunks)
+        .then(() => {
+          state.saved = true;
+          if (markSaved) markSaved();
+        })
+        .catch((e) => logger.error("Update truncated answer failed:", e));
     }
     if (onEnd) onEnd();
     resolve({ chatId: state.chatId, truncated: true });
@@ -283,7 +304,7 @@ function handleStreamData(state, chunk, onChunk, onEnd, resolve, reject, markSav
   }
 
   if (parsed.content && onChunk) {
-    onChunk(JSON.stringify({ code: 0, msg: 'success', data: { type: 'content', content: parsed.content } }));
+    onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "content", content: parsed.content } }));
   }
 }
 
@@ -305,7 +326,7 @@ async function handleStreamEnd(state, onChunk, onEnd, resolve, markSaved) {
       logger.error("Update chat answer failed:", e);
     }
   }
-  if (onChunk) onChunk(JSON.stringify({ code: 0, msg: 'success', data: { type: 'end', chatId: state.chatId } }));
+  if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "end", chatId: state.chatId } }));
   if (onEnd) onEnd();
   resolve({ chatId: state.chatId });
 }
@@ -322,10 +343,13 @@ function handleStreamError(state, err, onChunk, onEnd, reject, markSaved) {
   clearIdleTimeout(state);
   logger.error("Ollama request error:", err);
   if (state.chatId && state.fullAnswer && !state.saved) {
-    chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).then(() => {
-      state.saved = true;
-      if (markSaved) markSaved();
-    }).catch(e => logger.error('Update partial answer (error) failed:', e));
+    chatService
+      .updateChatAnswer(state.chatId, state.fullAnswer, state.chunks)
+      .then(() => {
+        state.saved = true;
+        if (markSaved) markSaved();
+      })
+      .catch((e) => logger.error("Update partial answer (error) failed:", e));
   }
   if (onChunk) onChunk(JSON.stringify({ code: 500, msg: err.message, data: null }));
   if (onEnd) onEnd();
@@ -344,10 +368,13 @@ function handleStreamTimeout(state, onChunk, onEnd, reject, markSaved) {
   logger.error("Ollama request timeout");
   state.ollamaReq.destroy();
   if (state.chatId && state.fullAnswer && !state.saved) {
-    chatService.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).then(() => {
-      state.saved = true;
-      if (markSaved) markSaved();
-    }).catch(e => logger.error('Update partial answer (timeout) failed:', e));
+    chatService
+      .updateChatAnswer(state.chatId, state.fullAnswer, state.chunks)
+      .then(() => {
+        state.saved = true;
+        if (markSaved) markSaved();
+      })
+      .catch((e) => logger.error("Update partial answer (timeout) failed:", e));
   }
   if (onChunk) onChunk(JSON.stringify({ code: 500, msg: "LLM 请求超时", data: null }));
   if (onEnd) onEnd();
@@ -362,24 +389,32 @@ const chatService = {
    * 构建检索上下文
    * @param {string} query - 用户问题
    * @param {Object} options - 配置选项
+   * @param {string} options.userId - 用户ID（用于权限验证）
+   * @param {Object} options.userRole - 用户角色信息
    * @returns {Promise<Array>} 检索到的文档块
    */
   async buildContext(query, options = {}) {
-    const { knowledgeBaseId, topK = defaultTopK } = options;
+    const { knowledgeBaseId, topK = defaultTopK, userId, userRole } = options;
     logger.info(`Building context for query: ${query}`);
+
+    // 权限验证：检查用户是否有权访问指定知识库
+    if (knowledgeBaseId) {
+      await permissionService.checkKnowledgeBaseAccess(userId, knowledgeBaseId, { userRole });
+    }
+
     const chunks = await retrievalService.hybridSearch(query, { knowledgeBaseId, topK });
-    
+
     // 根据 documentId 查询文档名称
-    const documentIds = [...new Set(chunks.map(c => c.documentId))];
-    const documents = await Document.find({ _id: { $in: documentIds } }).select('name');
-    const docNameMap = new Map(documents.map(d => [d._id.toString(), d.name]));
-    
+    const documentIds = [...new Set(chunks.map((c) => c.documentId))];
+    const documents = await Document.find({ _id: { $in: documentIds } }).select("name");
+    const docNameMap = new Map(documents.map((d) => [d._id.toString(), d.name]));
+
     // 为每个 chunk 补充 documentName
-    const chunksWithNames = chunks.map(chunk => ({
+    const chunksWithNames = chunks.map((chunk) => ({
       ...chunk,
-      documentName: docNameMap.get(chunk.documentId) || '未知文档'
+      documentName: docNameMap.get(chunk.documentId) || "未知文档",
     }));
-    
+
     logger.info(`Retrieved ${chunksWithNames.length} chunks for context`);
     return chunksWithNames;
   },
@@ -398,7 +433,7 @@ const chatService = {
     const references = answer ? extractReferences(answer, chunks) : [];
     const userMessage = { role: "user", content: query };
     const assistantMessage = answer ? { role: "assistant", content: answer, references } : null;
-    
+
     if (chatId) {
       const existingChat = await Chat.findOne({ _id: chatId, userId });
       if (existingChat) {
@@ -413,7 +448,7 @@ const chatService = {
         return existingChat;
       }
     }
-    
+
     const title = generateTitle(query);
     const chat = new Chat({
       userId,
@@ -454,17 +489,12 @@ const chatService = {
     const skip = (page - 1) * pageSize;
 
     const [chats, total] = await Promise.all([
-      Chat.find({ userId })
-        .select('title messageCount knowledgeBaseId createdAt updatedAt')
-        .sort({ updatedAt: -1 })
-        .skip(skip)
-        .limit(pageSize)
-        .lean(),
+      Chat.find({ userId }).select("title messageCount knowledgeBaseId createdAt updatedAt").sort({ updatedAt: -1 }).skip(skip).limit(pageSize).lean(),
       Chat.countDocuments({ userId }),
     ]);
 
     return {
-      list: chats.map(chat => ({
+      list: chats.map((chat) => ({
         id: chat._id,
         title: chat.title,
         messageCount: chat.messageCount,
@@ -497,7 +527,7 @@ const chatService = {
       title: chat.title,
       messageCount: chat.messageCount,
       knowledgeBaseId: chat.knowledgeBaseId,
-      messages: chat.messages.map(msg => ({
+      messages: chat.messages.map((msg) => ({
         role: msg.role,
         content: msg.content,
         timestamp: msg.timestamp,
@@ -526,8 +556,8 @@ const chatService = {
    * @returns {Promise<Object>} 回答结果
    */
   async ask(query, options = {}) {
-    const { userId, knowledgeBaseId, chatId, topK = defaultTopK } = options;
-    
+    const { userId, userRole, knowledgeBaseId, chatId, topK = defaultTopK } = options;
+
     let historyMessages = [];
     if (chatId) {
       const historyChat = await this.getChatById(chatId, userId);
@@ -536,8 +566,8 @@ const chatService = {
         logger.info(`Loaded ${historyMessages.length} historical messages for chat ${chatId}`);
       }
     }
-    
-    const chunks = await this.buildContext(query, { knowledgeBaseId, topK });
+
+    const chunks = await this.buildContext(query, { knowledgeBaseId, topK, userId, userRole });
 
     if (chunks.length === 0) {
       if (userId) {
@@ -548,10 +578,13 @@ const chatService = {
     }
 
     const promptWithHistory = buildPromptWithHistory(query, chunks, historyMessages);
-    
+
     const prompt = promptWithHistory;
     logger.info("Sending prompt to LLM...");
-    
+    logger.info("=== 完整 Prompt 内容 ===");
+    logger.info(prompt);
+    logger.info("========================");
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), llmTimeout);
 
@@ -563,7 +596,7 @@ const chatService = {
           model: chatModel,
           messages: [{ role: "user", content: prompt }],
           stream: false,
-          think: false,
+          think: true,
         }),
         signal: controller.signal,
       });
@@ -602,7 +635,7 @@ const chatService = {
    * @returns {Object} 包含 promise 和 cancel 的对象
    */
   askStream(query, options = {}) {
-    const { userId, knowledgeBaseId, chatId: inputChatId, topK = defaultTopK, onChunk, onEnd, markSaved } = options;
+    const { userId, userRole, knowledgeBaseId, chatId: inputChatId, topK = defaultTopK, onChunk, onEnd, markSaved } = options;
 
     let cancel;
 
@@ -615,11 +648,11 @@ const chatService = {
           logger.info(`Loaded ${historyMessages.length} historical messages for chat ${inputChatId}`);
         }
       }
-      
-      const chunks = await this.buildContext(query, { knowledgeBaseId, topK });
+
+      const chunks = await this.buildContext(query, { knowledgeBaseId, topK, userId, userRole });
 
       if (chunks.length === 0) {
-        if (onChunk) onChunk(JSON.stringify({ code: 0, msg: 'success', data: { type: 'end', content: '暂无相关信息' } }));
+        if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "end", content: "暂无相关信息" } }));
         if (onEnd) onEnd();
         if (userId) await this.saveChat(userId, knowledgeBaseId, query, null, [], inputChatId);
         return { chatId: inputChatId };
@@ -633,9 +666,12 @@ const chatService = {
       }
 
       const promptWithHistory = buildPromptWithHistory(query, chunks, historyMessages);
-      
+
       const prompt = promptWithHistory;
       logger.info("Sending prompt to LLM (streaming)...");
+      logger.info("=== 完整 Prompt 内容 ===");
+      logger.info(prompt);
+      logger.info("========================");
 
       const requestOptions = createOllamaRequestOptions();
 
@@ -648,10 +684,12 @@ const chatService = {
             state.ollamaReq.destroy();
           }
           if (state.chatId && state.fullAnswer && !state.saved) {
-            this.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks).then(() => {
-              state.saved = true;
-              if (markSaved) markSaved();
-            }).catch(e => logger.error('Update partial answer (client disconnect) failed:', e));
+            this.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks)
+              .then(() => {
+                state.saved = true;
+                if (markSaved) markSaved();
+              })
+              .catch((e) => logger.error("Update partial answer (client disconnect) failed:", e));
           }
         };
 
@@ -682,8 +720,8 @@ const chatService = {
             model: chatModel,
             messages: [{ role: "user", content: prompt }],
             stream: true,
-            think: false,
-          })
+            think: true,
+          }),
         );
 
         state.ollamaReq.end();

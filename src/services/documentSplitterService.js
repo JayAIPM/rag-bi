@@ -59,6 +59,8 @@ const documentSplitterService = {
           content: section.content,
           title: section.title,
           level: section.level,
+          hierarchyPath: section.hierarchyPath,  // 层级路径
+          parentContext: section.parentContext,  // 父级上下文
           start: section.start,
           end: section.end,
           length: section.content.length
@@ -73,11 +75,18 @@ const documentSplitterService = {
         const chunks = await splitter.splitText(section.content);
         
         chunks.forEach((chunk, i) => {
+          // 子块继承父章节的层级路径，但添加分块标识
+          const childHierarchyPath = section.hierarchyPath 
+            ? `${section.hierarchyPath}`
+            : '';
+          
           allChunks.push({
             index: globalIndex++,
             content: chunk,
             title: section.title,
             level: section.level,
+            hierarchyPath: childHierarchyPath,
+            parentContext: section.parentContext,  // 父级上下文
             isPart: i > 0,
             partIndex: i,
             start: section.start + section.content.indexOf(chunk),
@@ -96,9 +105,14 @@ const documentSplitterService = {
   detectSections(content) {
     const sections = [];
     const lines = content.split('\n');
+    
+    // 维护一个栈来跟踪当前层级
+    const levelStack = []; // 存储每个层级的标题内容
+    
     let currentSection = {
       title: null,
       level: 0,
+      hierarchyPath: '',  // 层级路径，如 "第一章/第一节"
       content: '',
       start: 0,
       end: 0
@@ -115,14 +129,38 @@ const documentSplitterService = {
         // 保存当前章节（如果有内容）
         if (currentSection.content.trim()) {
           currentSection.end = lineOffset - 1;
+          // 添加父级上下文（基于 levelStack，不包含当前要创建的新章节）
+          currentSection.parentContext = currentSection.level > 1
+            ? levelStack.slice(0, currentSection.level - 1).map(l => l.title).join(' / ')
+            : '';
           sections.push(currentSection);
         }
         
         // 创建新章节
         const level = headingMatch[1].length;
+        const title = headingMatch[2].trim();
+        
+        // 更新层级栈：弹出比当前层级更深的内容
+        levelStack.length = level - 1;
+        // 添加当前层级
+        levelStack[level - 1] = { title, level };
+        
+        // 构建层级路径
+        const hierarchyPath = levelStack
+          .slice(0, level)
+          .map(l => l.title)
+          .join(' / ');
+        
+        // 构建父级上下文（不包含自身，即 level-1 的内容）
+        const parentContext = level > 1
+          ? levelStack.slice(0, level - 1).map(l => l.title).join(' / ')
+          : '';
+        
         currentSection = {
-          title: headingMatch[2].trim(),
+          title,
           level,
+          hierarchyPath,
+          parentContext,
           content: '',
           start: lineOffset,
           end: 0
@@ -139,6 +177,10 @@ const documentSplitterService = {
     // 添加最后一个章节
     if (currentSection.content.trim()) {
       currentSection.end = content.length;
+      // 构建父级上下文（基于当前章节的 level，不包含自身）
+      currentSection.parentContext = currentSection.level > 1
+        ? levelStack.slice(0, currentSection.level - 1).map(l => l.title).join(' / ')
+        : '';
       sections.push(currentSection);
     }
 
@@ -147,6 +189,8 @@ const documentSplitterService = {
       return [{
         title: null,
         level: 0,
+        hierarchyPath: '',
+        parentContext: '',
         content,
         start: 0,
         end: content.length

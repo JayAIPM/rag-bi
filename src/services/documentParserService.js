@@ -4,8 +4,52 @@ const { PDFParse } = require('pdf-parse');
 const mammoth = require('mammoth');
 const { AppError } = require('../utils/error');
 const logger = require('../utils/logger');
+const structuredDocumentService = require('./structuredDocumentService');
 
 const documentParserService = {
+  supportsStructuredParsing(fileType) {
+    return structuredDocumentService.supportsStructuredParsing(fileType);
+  },
+
+  async parseStructuredDocument(filePath, fileType) {
+    logger.info(`Parsing structured document: ${filePath}, type: ${fileType}`);
+
+    if (!this.supportsStructuredParsing(fileType)) {
+      return null;
+    }
+
+    const absolutePath = path.resolve(filePath);
+
+    try {
+      await fs.access(absolutePath);
+    } catch (error) {
+      logger.error(`File not found: ${absolutePath}`);
+      throw new AppError('文件不存在', 404, 'FILE_NOT_FOUND');
+    }
+
+    let structuredDoc;
+    const normalizedType = fileType.toLowerCase();
+
+    if (structuredDocumentService.isWordSourceType(normalizedType)) {
+      structuredDoc = await structuredDocumentService.parseFromWordFile(absolutePath);
+    } else {
+      const content = await fs.readFile(absolutePath, 'utf-8');
+      if (!content || content.trim().length === 0) {
+        throw new AppError('文档内容为空', 400, 'EMPTY_CONTENT');
+      }
+      structuredDoc = structuredDocumentService.parseFromContent(content, fileType);
+    }
+
+    if (!structuredDoc.plainText || !structuredDoc.plainText.trim()) {
+      throw new AppError('文档内容为空', 400, 'EMPTY_CONTENT');
+    }
+
+    logger.info(
+      `Structured document parsed: nodes=${structuredDoc.nodes.length}, sourceType=${structuredDoc.sourceType}`
+    );
+    return structuredDoc;
+  },
+
   async parseDocument(filePath, fileType) {
     logger.info(`Parsing document: ${filePath}, type: ${fileType}`);
     

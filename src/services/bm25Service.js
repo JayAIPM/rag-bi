@@ -16,7 +16,7 @@ const bm25Service = {
     
     this.miniSearch = new MiniSearch({
       fields: ['content', 'title'],
-      storeFields: ['id', 'documentId', 'documentName', 'chunkIndex', 'content', 'title', 'start', 'end'],
+      storeFields: ['id', 'documentId', 'documentName', 'chunkIndex', 'content', 'title', 'start', 'end', 'chunkType', 'parentId', 'parentContent', 'hierarchyPath', 'parentContext'],
       tokenize: tokenize
     });
     
@@ -35,11 +35,16 @@ const bm25Service = {
       id: chunk.id || `${chunk.documentId}_${index}`,
       documentId: chunk.documentId,
       documentName: chunk.documentName || '',
-      chunkIndex: chunk.chunkIndex || index,
+      chunkIndex: chunk.chunkIndex ?? index,
       content: chunk.content,
       title: chunk.title || '',
       start: chunk.start || 0,
-      end: chunk.end || 0
+      end: chunk.end || 0,
+      chunkType: chunk.chunkType || 'child',
+      parentId: chunk.parentId || '',
+      parentContent: chunk.parentContent || '',
+      hierarchyPath: chunk.hierarchyPath || '',
+      parentContext: chunk.parentContext || ''
     }));
 
     try {
@@ -81,6 +86,8 @@ const bm25Service = {
         title: result.title,
         start: result.start,
         end: result.end,
+        hierarchyPath: result.hierarchyPath || '',
+        parentContext: result.parentContext || '',
         score: result.score
       }));
     } catch (error) {
