@@ -10,10 +10,11 @@ const LLM_CONFIG = {
 
 // 查询重写配置
 const QUERY_REWRITE_CONFIG = {
+  ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434",
   model: process.env.QUERY_REWRITE_MODEL || "deepseek-r1:8b",
   timeout: parseInt(process.env.QUERY_REWRITE_TIMEOUT) || 30000,
   maxTokens: 200,
-  enabled: process.env.QUERY_REWRITE_ENABLED === 'true' || false,
+  enabled: process.env.QUERY_REWRITE_ENABLED === "true" || false,
 };
 
 // 重排序配置
@@ -22,11 +23,11 @@ const RERANK_CONFIG = {
   timeout: parseInt(process.env.RERANK_TIMEOUT) || 30000,
   topK: parseInt(process.env.RERANK_TOP_K) || 10,
   candidateCount: parseInt(process.env.RERANK_CANDIDATE_COUNT) || 20,
-  enabled: process.env.RERANK_ENABLED === 'true' || false,
+  enabled: process.env.RERANK_ENABLED === "true" || false,
 };
 
 const RETRIEVAL_CONFIG = {
-  defaultTopK: 3,
+  defaultTopK: 6,
   defaultMaxToken: 200,
 };
 
