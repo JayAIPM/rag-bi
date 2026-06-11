@@ -101,6 +101,123 @@ const documentSplitterService = {
     return allChunks;
   },
 
+  // 基于结构化节点分块：直接利用解析出的 nodes[]（Word/Markdown 的原生层级结构）
+  async splitFromStructuredNodes(nodes, options = {}) {
+    logger.info(`Starting structured nodes splitting, nodes count: ${nodes.length}`);
+
+    const {
+      chunkSize = 800,
+      chunkOverlap = 150
+    } = options;
+
+    // 阶段 1：将 nodes 分组为 sections（章节）
+    const sections = [];
+    const headingStack = []; // [{ level, text }]
+
+    let currentSection = null;
+    let hasSeenHeading = false;
+
+    for (const node of nodes) {
+      if (node.type === 'heading') {
+        // 保存上一个章节
+        if (currentSection && currentSection.content.trim()) {
+          sections.push(currentSection);
+        }
+
+        // 更新层级栈：弹出 level >= 当前 level 的标题
+        while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= node.level) {
+          headingStack.pop();
+        }
+        headingStack.push({ level: node.level, text: node.text });
+
+        // 构建层级路径和父级上下文
+        const hierarchyPath = headingStack.map(h => h.text).join(' / ');
+        const parentContext = headingStack.slice(0, -1).map(h => h.text).join(' / ');
+
+        currentSection = {
+          title: node.text,
+          level: node.level,
+          hierarchyPath,
+          parentContext,
+          content: '',
+          start: node.start,
+          end: node.end
+        };
+        hasSeenHeading = true;
+      } else {
+        // paragraph / table / 其他内容节点
+        const nodeText = (node.text || '').trim();
+        if (!nodeText) continue;
+
+        if (!currentSection) {
+          // 首个标题之前的内容 → 初始化无标题章节
+          currentSection = {
+            title: null,
+            level: 0,
+            hierarchyPath: '',
+            parentContext: '',
+            content: nodeText,
+            start: node.start,
+            end: node.end
+          };
+        } else {
+          currentSection.content += '\n\n' + nodeText;
+          currentSection.end = node.end;
+        }
+      }
+    }
+
+    // 保存最后一个章节
+    if (currentSection && currentSection.content.trim()) {
+      sections.push(currentSection);
+    }
+
+    // 阶段 2：将 sections 转换为 chunks
+    let allChunks = [];
+    let globalIndex = 0;
+
+    for (const section of sections) {
+      if (section.content.length <= chunkSize) {
+        allChunks.push({
+          index: globalIndex++,
+          content: section.content,
+          title: section.title,
+          level: section.level,
+          hierarchyPath: section.hierarchyPath,
+          parentContext: section.parentContext,
+          start: section.start,
+          end: section.end,
+          length: section.content.length
+        });
+      } else {
+        // 章节过长，在章节内用 SentenceSplitter 拆分
+        const splitter = new SentenceSplitter({ chunkSize, chunkOverlap });
+        const subChunks = await splitter.splitText(section.content);
+
+        for (let i = 0; i < subChunks.length; i++) {
+          const subChunk = subChunks[i];
+          const idxInContent = section.content.indexOf(subChunk);
+          allChunks.push({
+            index: globalIndex++,
+            content: subChunk,
+            title: section.title,
+            level: section.level,
+            hierarchyPath: section.hierarchyPath,
+            parentContext: section.parentContext,
+            isPart: i > 0,
+            partIndex: i,
+            start: section.start + (idxInContent >= 0 ? idxInContent : 0),
+            end: section.start + (idxInContent >= 0 ? idxInContent + subChunk.length : subChunk.length),
+            length: subChunk.length
+          });
+        }
+      }
+    }
+
+    logger.info(`Structured nodes split completed, ${allChunks.length} chunks generated (from ${sections.length} sections)`);
+    return allChunks;
+  },
+
   // 检测文档中的 Markdown 章节标题，将文档分割成逻辑章节
   detectSections(content) {
     const sections = [];

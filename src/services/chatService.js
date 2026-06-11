@@ -26,6 +26,20 @@ function truncateText(text, maxToken = defaultMaxToken) {
 }
 
 /**
+ * 根据层级深度生成缩进前缀
+ * @param {number} level - 层级深度（0=顶级标题，1=一级子标题，2=二级子标题...）
+ * @returns {string} 缩进前缀
+ */
+function getHierarchyPrefix(level) {
+  if (level === 0) return "";
+  if (level === 1) return "  ├── ";
+  if (level === 2) return "  │   ├── ";
+  if (level === 3) return "  │   │   ├── ";
+  // 超过3级时继续使用2级的缩进样式
+  return "  │   │   │   ".slice(0, 4 + level * 3) + "├── ";
+}
+
+/**
  * 构建上下文字符串
  * @param {Array} chunks - 检索到的文档块
  * @returns {string} 格式化的上下文字符串
@@ -34,26 +48,41 @@ function buildContext(chunks) {
   if (!chunks || chunks.length === 0) {
     return "无相关参考信息";
   }
-  return chunks
+
+  // 按文档和层级排序，便于形成树形结构
+  const sortedChunks = [...chunks].sort((a, b) => {
+    if (a.documentId !== b.documentId) {
+      return (a.documentId || "").localeCompare(b.documentId || "");
+    }
+    return (a.level || 0) - (b.level || 0);
+  });
+
+  return sortedChunks
     .map((chunk, index) => {
       const truncatedContent = truncateText(chunk.content || "");
       const docName = chunk.documentName || "未知文档";
+      const level = chunk.level || 0;
 
-      // 构建层级信息
+      // 构建层级信息（带缩进的树形结构）
       let sectionInfo = "";
       if (chunk.hierarchyPath) {
-        sectionInfo = `【章节】${chunk.hierarchyPath}`;
-        if (chunk.parentContext) {
-          sectionInfo += `\n【上下文】${chunk.parentContext}`;
-        }
+        // 将路径拆分为各级标题，添加缩进前缀
+        const pathParts = chunk.hierarchyPath.split(" / ");
+        sectionInfo = pathParts
+          .map((part, i) => {
+            const prefix = getHierarchyPrefix(i);
+            return `${prefix}${part}`;
+          })
+          .join("\n");
       }
 
-      // 构建完整上下文
-      let contextBlock = `[${index + 1}] ${docName}`;
+      // 构建完整上下文（带缩进层级展示）
+      const indexLabel = `[${index + 1}]`;
+      let contextBlock = `${indexLabel} 📄 ${docName}`;
       if (sectionInfo) {
         contextBlock += `\n${sectionInfo}`;
       }
-      contextBlock += `\n【内容】${truncatedContent}`;
+      contextBlock += `\n${getHierarchyPrefix(level)}📝 ${truncatedContent}`;
 
       return contextBlock;
     })

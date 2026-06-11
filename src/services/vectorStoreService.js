@@ -1,6 +1,7 @@
 const lancedb = require('@lancedb/lancedb');
 const path = require('path');
 const logger = require('../utils/logger');
+const embeddingService = require('./embeddingService');
 
 const config = {
   dbPath: process.env.LANCEDB_PATH || path.join(__dirname, '../../lancedb'),
@@ -188,6 +189,48 @@ const vectorStoreService = {
     } catch (error) {
       logger.error('Failed to get all chunks', error);
       throw new Error(`获取分块失败: ${error.message}`);
+    }
+  },
+
+  /**
+   * 阶段三：父章节摘要向量搜索
+   * 当检索到的子章节有父章节时，使用父章节内容进行向量检索
+   * 返回与父章节相似的其他子章节（兄弟节点）
+   * 
+   * @param {string} parentContent - 父章节内容
+   * @param {Array} excludeIds - 排除的 chunk IDs（避免重复）
+   * @param {Object} options - 检索选项
+   * @returns {Promise<Array>} 父章节检索结果
+   */
+  async searchByParentContent(parentContent, excludeIds = [], options = {}) {
+    const { knowledgeBaseId, limit = 5 } = options;
+    
+    if (!parentContent || parentContent.trim().length === 0) {
+      return [];
+    }
+
+    logger.info(`[父章节向量搜索] parentContent length: ${parentContent.length}, excludeIds: ${excludeIds.length}`);
+
+    try {
+      // 1. 为父章节内容生成向量
+      const parentEmbedding = await embeddingService.embedText(parentContent);
+      
+      // 2. 在 LanceDB 中搜索相似 chunk
+      const results = await this.search(parentEmbedding, {
+        knowledgeBaseId,
+        limit: limit + excludeIds.length  // 多取一些，后面过滤
+      });
+
+      // 3. 过滤掉排除的 IDs（避免与已有结果重复）
+      const filteredResults = results.filter(
+        chunk => !excludeIds.includes(chunk.id) && !excludeIds.includes(chunk.chunkId)
+      );
+
+      logger.info(`[父章节向量搜索] found ${filteredResults.length} related chunks (after filtering)`);
+      return filteredResults.slice(0, limit);
+    } catch (error) {
+      logger.error('[父章节向量搜索] failed:', error.message);
+      return [];
     }
   },
 

@@ -70,17 +70,53 @@ const documentService = {
       
       await Document.findByIdAndUpdate(documentId, { status: 'processing' });
       
-      // 1. 文档解析：提取文件内容为纯文本
+      // 1. 文档解析：提取文件内容
       logger.info(`Step 1: Parsing document ${documentId}`);
+      
+      // 1a. 结构化解析（保留层级信息，用于后续分块）
+      const structuredDoc = await documentParserService.parseStructuredDocument(document.path, document.type);
+
+      // 1b. 普通解析（纯文本，作为兜底）
       const content = await documentParserService.parseDocument(document.path, document.type);
       
-      // 2. 语义分块：使用章节边界检测，保持语义完整性
+      // 2. 语义分块：优先使用结构化节点（Word/Markdown 的原生层级）
       logger.info(`Step 2: Splitting document ${documentId}`);
-      const chunks = await documentSplitterService.splitWithSectionDetection(content, {
-        chunkSize: 800,
-        chunkOverlap: 150
-      });
+
+      let chunks;
+      const useStructuredNodes = structuredDoc &&
+        structuredDoc.nodes &&
+        structuredDoc.nodes.length > 0 &&
+        structuredDoc.nodes.some(n => n.type === 'heading');
+
+      if (useStructuredNodes) {
+        logger.info(`Using structured nodes splitting (native document hierarchy)`);
+        chunks = await documentSplitterService.splitFromStructuredNodes(structuredDoc.nodes, {
+          chunkSize: 800,
+          chunkOverlap: 150
+        });
+      } else {
+        logger.info(`Using section detection (regex-based, for txt/markdown without native headings)`);
+        chunks = await documentSplitterService.splitWithSectionDetection(content, {
+          chunkSize: 800,
+          chunkOverlap: 150
+        });
+      }
+
+      // 打印前 5 个 chunk 的层级信息，便于验证
       logger.info(`Generated ${chunks.length} chunks for document ${documentId}`);
+      if (chunks.length > 0) {
+        logger.info('--- Chunk hierarchy preview ---');
+        chunks.slice(0, 5).forEach((chunk, idx) => {
+          logger.info(`[${idx + 1}] title="${chunk.title || '(无)'}", ` +
+            `hierarchyPath="${chunk.hierarchyPath || '(无)'}", ` +
+            `parentContext="${chunk.parentContext || '(无)'}", ` +
+            `level=${chunk.level}, contentLen=${chunk.content.length}`);
+        });
+        if (chunks.length > 5) {
+          logger.info(`...还有 ${chunks.length - 5} 个 chunks`);
+        }
+        logger.info('--- End preview ---');
+      }
       
       // 3. 向量化处理：将文本块转换为向量表示
       logger.info(`Step 3: Embedding document ${documentId}`);
