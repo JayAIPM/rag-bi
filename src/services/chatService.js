@@ -41,7 +41,7 @@ function getHierarchyPrefix(level) {
 }
 
 /**
- * 构建上下文字符串
+ * 构建上下文字符串（按文档分组，同一文档共享一个引用编号）
  * @param {Array} chunks - 检索到的文档块
  * @returns {string} 格式化的上下文字符串
  */
@@ -73,43 +73,70 @@ function buildContext(chunks, maxTotalTokens = maxContextTokens) {
     return (a.level || 0) - (b.level || 0);
   });
 
+  const docGroups = [];
+  const docIdToGroupIndex = new Map();
+  for (const chunk of sortedChunks) {
+    const docId = chunk.documentId || "unknown";
+    if (!docIdToGroupIndex.has(docId)) {
+      docIdToGroupIndex.set(docId, docGroups.length);
+      docGroups.push({
+        documentId: chunk.documentId,
+        documentName: chunk.documentName || "未知文档",
+        chunks: []
+      });
+    }
+    docGroups[docIdToGroupIndex.get(docId)].chunks.push(chunk);
+  }
+
   const contextBlocks = [];
   let totalChars = 0;
 
-  for (let i = 0; i < sortedChunks.length; i++) {
-    const chunk = sortedChunks[i];
-    const docName = chunk.documentName || "未知文档";
-    const level = chunk.level || 0;
+  for (let docIdx = 0; docIdx < docGroups.length; docIdx++) {
+    const group = docGroups[docIdx];
+    const docName = group.documentName;
+    const indexLabel = `[${docIdx + 1}]`;
 
-    let sectionInfo = "";
-    if (chunk.hierarchyPath) {
-      const pathParts = chunk.hierarchyPath.split(" / ");
-      sectionInfo = pathParts
-        .map((part, j) => {
-          const prefix = getHierarchyPrefix(j);
-          return `${prefix}${part}`;
-        })
-        .join("\n");
+    const docHeader = `${indexLabel} 📄 ${docName}`;
+    let docContent = "";
+    let docChars = docHeader.length;
+
+    for (let chunkIdx = 0; chunkIdx < group.chunks.length; chunkIdx++) {
+      const chunk = group.chunks[chunkIdx];
+      const level = chunk.level || 0;
+
+      let sectionInfo = "";
+      if (chunk.hierarchyPath) {
+        const pathParts = chunk.hierarchyPath.split(" / ");
+        sectionInfo = pathParts
+          .map((part, j) => {
+            const prefix = getHierarchyPrefix(j);
+            return `${prefix}${part}`;
+          })
+          .join("\n");
+      }
+
+      const chunkHeader = `${sectionInfo ? `\n${sectionInfo}` : ""}\n${getHierarchyPrefix(level)}📝 `;
+      const chunkHeaderLength = chunkHeader.length;
+
+      const remainingChars = availableContextChars - totalChars - docChars - chunkHeaderLength;
+      if (remainingChars <= 50) {
+        logger.debug(`Context budget exhausted at doc ${docIdx + 1}/${docGroups.length}, chunk ${chunkIdx + 1}/${group.chunks.length}`);
+        break;
+      }
+
+      const contentChars = Math.min(remainingChars, (chunk.content || "").length);
+      const truncatedContent = contentChars < (chunk.content || "").length
+        ? (chunk.content || "").substring(0, contentChars) + "..."
+        : (chunk.content || "");
+
+      docContent += `${chunkHeader}${truncatedContent}`;
+      docChars += chunkHeaderLength + truncatedContent.length;
     }
 
-    const indexLabel = `[${i + 1}]`;
-    const header = `${indexLabel} 📄 ${docName}${sectionInfo ? `\n${sectionInfo}` : ""}\n${getHierarchyPrefix(level)}📝 `;
-    const headerLength = header.length;
-
-    const remainingChars = availableContextChars - totalChars - headerLength;
-    if (remainingChars <= 50) {
-      logger.debug(`Context budget exhausted at chunk ${i + 1}/${sortedChunks.length}`);
-      break;
+    if (docContent) {
+      contextBlocks.push(`${docHeader}${docContent}`);
+      totalChars += docHeader.length + docContent.length;
     }
-
-    const contentChars = Math.min(remainingChars, (chunk.content || "").length);
-    const truncatedContent = contentChars < (chunk.content || "").length
-      ? (chunk.content || "").substring(0, contentChars) + "..."
-      : (chunk.content || "");
-
-    const contextBlock = `${header}${truncatedContent}`;
-    contextBlocks.push(contextBlock);
-    totalChars += contextBlock.length;
   }
 
   if (contextBlocks.length === 0 && sortedChunks.length > 0) {
@@ -203,7 +230,7 @@ ${query}
 }
 
 /**
- * 从回答中提取引用
+ * 从回答中提取引用（按文档级别映射）
  * @param {string} answer - LLM 回答
  * @param {Array} chunks - 检索到的文档块
  * @returns {Array} 引用列表
@@ -214,17 +241,41 @@ function extractReferences(answer, chunks) {
   const usedIndices = new Set();
   let match;
 
+  const sortedChunks = [...chunks].sort((a, b) => {
+    if (a.documentId !== b.documentId) {
+      return (a.documentId || "").localeCompare(b.documentId || "");
+    }
+    return (a.level || 0) - (b.level || 0);
+  });
+
+  const docGroups = [];
+  const docIdToGroupIndex = new Map();
+  for (const chunk of sortedChunks) {
+    const docId = chunk.documentId || "unknown";
+    if (!docIdToGroupIndex.has(docId)) {
+      docIdToGroupIndex.set(docId, docGroups.length);
+      docGroups.push({
+        documentId: chunk.documentId,
+        documentName: chunk.documentName || "未知文档",
+        chunks: []
+      });
+    }
+    docGroups[docIdToGroupIndex.get(docId)].chunks.push(chunk);
+  }
+
   while ((match = referencePattern.exec(answer)) !== null) {
     const index = parseInt(match[1], 10) - 1;
     const startIndex = match.index;
     const endIndex = match.index + match[0].length;
 
-    if (index >= 0 && index < chunks.length && !usedIndices.has(index)) {
+    if (index >= 0 && index < docGroups.length && !usedIndices.has(index)) {
       usedIndices.add(index);
+      const group = docGroups[index];
+      const combinedContent = group.chunks.map(c => c.content || "").join("\n");
       references.push({
-        documentId: chunks[index].documentId || null,
-        documentName: chunks[index].documentName || "未知文档",
-        content: chunks[index].content || "",
+        documentId: group.documentId || null,
+        documentName: group.documentName,
+        content: combinedContent,
         startIndex,
         endIndex,
       });

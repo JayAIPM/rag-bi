@@ -525,7 +525,6 @@ const qdrantService = {
 
     try {
       const info = await this.client.getCollection(name);
-      const clusterInfo = await this.client.clusterInfo().catch(() => null);
 
       return {
         name,
@@ -536,7 +535,7 @@ const qdrantService = {
         segmentsCount: info.segments_count || 0,
         diskDataSize: info.disk_data_size || 0,
         ramDataSize: info.ram_data_size || 0,
-        cluster: clusterInfo || null
+        optimizerStatus: info.optimizer_status || 'unknown'
       };
     } catch (error) {
       logger.error(`Failed to get collection stats: ${name}`, error);
