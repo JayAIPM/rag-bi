@@ -1,84 +1,44 @@
 const logger = require('../utils/logger');
 const embeddingService = require('./embeddingService');
-const vectorStoreService = require('./vectorStoreService');
-const bm25Service = require('./bm25Service');
+const qdrantService = require('./qdrantService');
 const queryRewriteService = require('./queryRewriteService');
 const rerankService = require('./rerankService');
+const llamaindexService = require('./llamaindexService');
 
-const rrfFusion = (vectorResults, bm25Results, options = {}) => {
-  const { k = 60 } = options;
-  logger.info(`Performing RRF fusion with k=${k}, vectorResults=${vectorResults.length}, bm25Results=${bm25Results.length}`);
-
-  const scoreMap = new Map();
-
-  // 处理向量检索结果
-  vectorResults.forEach((result, index) => {
-    const chunkId = result.chunkId || result.id;
-    if (!chunkId) return;
-    
-    const rank = index + 1;
-    const score = 1 / (k + rank);
-    const existing = scoreMap.get(chunkId) || { score: 0, result: null };
-    existing.score += score;
-    existing.result = result;
-    existing.sources = existing.sources || [];
-    existing.sources.push('vector');
-    scoreMap.set(chunkId, existing);
-  });
-
-  // 处理BM25检索结果
-  bm25Results.forEach((result, index) => {
-    const chunkId = result.chunkId || result.id;
-    if (!chunkId) return;
-    
-    const rank = index + 1;
-    const score = 1 / (k + rank);
-    const existing = scoreMap.get(chunkId) || { score: 0, result: null };
-    existing.score += score;
-    if (!existing.result) {
-      existing.result = result;
-    }
-    existing.sources = existing.sources || [];
-    existing.sources.push('bm25');
-    scoreMap.set(chunkId, existing);
-  });
-
-  // 转换为数组并排序
-  const fusedResults = Array.from(scoreMap.values())
-    .map(item => ({
-      ...item.result,
-      rrfScore: item.score,
-      sources: item.sources
-    }))
-    .sort((a, b) => b.rrfScore - a.rrfScore);
-
-  logger.info(`RRF fusion completed, ${fusedResults.length} unique results`);
-  return fusedResults;
+const REJECT_ANSWER_CONFIG = {
+  minChunks: 2,
+  minTopScore: 0.015,
+  minAvgScore: 0.008,
+  minKeywordMatchRatio: 0.3,
 };
 
-/**
- * 阶段二：层级回溯增强
- * 1. level 加权：level 越高分数加成越多（高层级标题更重要）
- * 2. 父子章节关联召回：子章节自动补充父章节 chunk
- * 3. 层级去重：同一父章节只保留 top1
- * 
- * @param {Array} results - RRF 融合后的结果
- * @param {Object} options - 配置选项
- * @returns {Array} 增强后的结果
- */
+const CONFIDENCE_CONFIG = {
+  weights: {
+    topRrfScore: 0.35,
+    avgRrfScore: 0.20,
+    keywordMatch: 0.15,
+    chunkRatio: 0.15,
+    consensusRatio: 0.15,
+  },
+  rrfScoreRange: { min: 0.010, max: 0.055 },
+  thresholds: {
+    high: 0.65,
+    medium: 0.35,
+    low: 0.20,
+  },
+};
+
 const enhanceByHierarchy = (results, options = {}) => {
   const { levelBoost = 0.1 } = options;
-  
+
   if (!results || results.length === 0) {
     return results;
   }
 
   logger.info(`[层级增强] 输入 ${results.length} 条结果`);
 
-  // 1. Level 加权：根据 level 值增加分数
   const leveledResults = results.map(result => {
     const level = result.level || 0;
-    // level 加权系数：level 0=1.0, level 1=1.1, level 2=1.2, level 3=1.3 ...
     const levelMultiplier = 1 + (level * levelBoost);
     return {
       ...result,
@@ -87,19 +47,6 @@ const enhanceByHierarchy = (results, options = {}) => {
     };
   });
 
-  // 2. 父子章节关联召回（从 LanceDB 补充父章节）
-  const parentChunks = [];
-  const childChunks = leveledResults.filter(r => r.level > 0);
-  
-  childChunks.forEach(child => {
-    // 如果子章节有 parentId，查找对应的父章节
-    if (child.parentId) {
-      // 标记需要回溯到父章节
-      logger.info(`[层级增强] 子章节 "${child.title}" (level=${child.level}) 触发父章节回溯`);
-    }
-  });
-
-  // 3. 层级去重：按 hierarchyPath 分组，每组只保留 top1
   const pathGroups = new Map();
   leveledResults.forEach(result => {
     const path = result.hierarchyPath || result.parentId || result.id;
@@ -110,120 +57,298 @@ const enhanceByHierarchy = (results, options = {}) => {
   });
 
   const deduplicatedResults = [];
-  pathGroups.forEach((group, path) => {
-    // 每组按 rrfScore 降序排序，取 top1
+  pathGroups.forEach((group) => {
     group.sort((a, b) => b.rrfScore - a.rrfScore);
     deduplicatedResults.push(group[0]);
   });
 
-  // 按 rrfScore 降序排序
   deduplicatedResults.sort((a, b) => b.rrfScore - a.rrfScore);
 
   logger.info(`[层级增强] 去重后 ${deduplicatedResults.length} 条结果`);
   return deduplicatedResults;
 };
 
+const computeConfidence = (chunks, query, options = {}) => {
+  const { limit = 6 } = options;
+  const cfg = CONFIDENCE_CONFIG;
+
+  const details = {
+    chunkCount: 0,
+    topScore: 0,
+    avgScore: 0,
+    normTopScore: 0,
+    normAvgScore: 0,
+    keywordMatchRatio: 0,
+    chunkRatio: 0,
+    consensusRatio: 0,
+  };
+
+  if (!chunks || chunks.length === 0) {
+    return {
+      score: 0,
+      level: 'insufficient',
+      reason: '未检索到任何相关文档片段',
+      details,
+      shouldReject: true,
+    };
+  }
+
+  details.chunkCount = chunks.length;
+  details.chunkRatio = Math.min(chunks.length / limit, 1.0);
+
+  const scores = chunks.map((c) => c.rrfScore || 0);
+  details.topScore = scores[0];
+  details.avgScore = scores.reduce((s, v) => s + v, 0) / scores.length;
+
+  const { min, max } = cfg.rrfScoreRange;
+  details.normTopScore = Math.max(0, Math.min(1, (details.topScore - min) / (max - min)));
+  details.normAvgScore = Math.max(0, Math.min(1, (details.avgScore - min) / (max - min)));
+
+  const queryKeywords = query
+    .toLowerCase()
+    .replace(/[，。！？、：；""''（）【】\[\],.!?:;"'()]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 2);
+
+  if (queryKeywords.length > 0 && chunks.length > 0) {
+    let totalMatches = 0;
+    chunks.forEach((chunk) => {
+      const content = (chunk.content || '').toLowerCase();
+      totalMatches += queryKeywords.filter((kw) => content.includes(kw)).length;
+    });
+    details.keywordMatchRatio = totalMatches / (queryKeywords.length * chunks.length);
+  }
+
+  const consensusCount = chunks.filter(
+    (c) => c.sources && c.sources.includes('vector') && c.sources.includes('bm25')
+  ).length;
+  details.consensusRatio = chunks.length > 0 ? consensusCount / chunks.length : 0;
+
+  const { weights } = cfg;
+  const score =
+    weights.topRrfScore * details.normTopScore +
+    weights.avgRrfScore * details.normAvgScore +
+    weights.keywordMatch * details.keywordMatchRatio +
+    weights.chunkRatio * details.chunkRatio +
+    weights.consensusRatio * details.consensusRatio;
+
+  let level;
+  if (score >= cfg.thresholds.high) {
+    level = 'high';
+  } else if (score >= cfg.thresholds.medium) {
+    level = 'medium';
+  } else if (score >= cfg.thresholds.low) {
+    level = 'low';
+  } else {
+    level = 'insufficient';
+  }
+
+  const shouldReject = level === 'insufficient';
+
+  const reasonMap = {
+    high: '置信度良好',
+    medium: '置信度一般，仅供参考',
+    low: '置信度较低，回答仅供参考',
+    insufficient: '检索结果不足以支持可靠回答',
+  };
+
+  logger.info(
+    `[置信度] score=${score.toFixed(3)} level=${level} ` +
+    `normTop=${details.normTopScore.toFixed(2)} normAvg=${details.normAvgScore.toFixed(2)} ` +
+    `keyword=${details.keywordMatchRatio.toFixed(2)} consensus=${details.consensusRatio.toFixed(2)} ` +
+    `chunkRatio=${details.chunkRatio.toFixed(2)}`
+  );
+
+  return {
+    score: Math.round(score * 1000) / 1000,
+    level,
+    reason: reasonMap[level],
+    details,
+    shouldReject,
+  };
+};
+
+const evaluateRelevance = (chunks, query) => {
+  const result = computeConfidence(chunks, query);
+  return {
+    shouldReject: result.shouldReject,
+    reason: result.reason,
+    details: result.details,
+  };
+};
+
+const rrfFusionThree = (list1, list2, list3 = [], options = {}) => {
+  const { k = 60 } = options;
+  const scoreMap = new Map();
+
+  const addScores = (results, source) => {
+    results.forEach((result, index) => {
+      const id = result.chunkId || result.id;
+      if (!id) return;
+      const rank = index + 1;
+      const score = 1 / (k + rank);
+      const existing = scoreMap.get(id) || { score: 0, result: null, sources: [] };
+      existing.score += score;
+      if (!existing.result) {
+        existing.result = result;
+      }
+      existing.sources.push(source);
+      scoreMap.set(id, existing);
+    });
+  };
+
+  addScores(list1, 'qdrant');
+  addScores(list2, 'summary');
+  if (list3 && list3.length > 0) {
+    addScores(list3, 'keyword');
+  }
+
+  return Array.from(scoreMap.values())
+    .map(item => ({
+      ...item.result,
+      rrfScore: item.score,
+      sources: item.sources
+    }))
+    .sort((a, b) => b.rrfScore - a.rrfScore);
+};
+
 const retrievalService = {
   async search(query, options = {}) {
     const { knowledgeBaseId, limit = 10 } = options;
     logger.info(`Searching for query: "${query}", knowledgeBaseId: ${knowledgeBaseId || 'all'}, limit: ${limit}`);
-    
+
     logger.info('Step 1: Embedding query text');
     const queryEmbedding = await embeddingService.embedText(query);
     logger.info('Query embedded successfully');
-    
-    logger.info('Step 2: Searching vector store');
-    const results = await vectorStoreService.search(queryEmbedding, {
+
+    logger.info('Step 2: Searching Qdrant vector store');
+    const results = await qdrantService.search(queryEmbedding, {
       knowledgeBaseId,
       limit
     });
-    
+
     logger.info(`Found ${results.length} results`);
     return results;
   },
 
   async bm25Search(query, options = {}) {
-    const { knowledgeBaseId, limit = 10 } = options;
-    logger.info(`BM25 searching for query: "${query}", knowledgeBaseId: ${knowledgeBaseId || 'all'}, limit: ${limit}`);
-    
-    const results = bm25Service.search(query, {
-      knowledgeBaseId,
-      limit
-    });
-    
-    logger.info(`BM25 search found ${results.length} results`);
-    return results;
+    logger.info(`BM25 search is now handled by Qdrant sparse vector, using hybridSearch instead`);
+    return this.hybridSearch(query, options);
   },
 
   async hybridSearch(query, options = {}) {
     const { knowledgeBaseId, limit = 6, k = 60 } = options;
     logger.info(`Hybrid searching for query: "${query}", knowledgeBaseId: ${knowledgeBaseId || 'all'}, limit: ${limit}, k: ${k}`);
 
-    // Step 0: 智能查询重写（使用 deepseek-r1:8b）
     const rewrittenQuery = await queryRewriteService.rewriteQuery(query);
     if (rewrittenQuery !== query) {
       logger.info(`Query rewritten: "${query}" -> "${rewrittenQuery}"`);
     }
 
-    logger.info('Step 1: Executing parallel searches');
-    const [vectorResults, bm25Results] = await Promise.all([
-      this.search(rewrittenQuery, { knowledgeBaseId, limit: 10 }),
-      this.bm25Search(rewrittenQuery, { knowledgeBaseId, limit: 10 })
-    ]);
+    logger.info('Step 1: Embedding query text');
+    const queryEmbedding = await embeddingService.embedText(rewrittenQuery);
 
-    // RRF融合
-    logger.info('Step 2: Performing RRF fusion');
-    const fusedResults = rrfFusion(vectorResults, bm25Results, { k });
+    logger.info('Step 2: Qdrant hybrid search (dense + sparse + RRF fusion)');
+    const qdrantResults = await qdrantService.hybridSearch(queryEmbedding, rewrittenQuery, {
+      knowledgeBaseId,
+      limit: 30,
+      fusion: 'rrf'
+    });
+    logger.info(`Qdrant returned ${qdrantResults.length} results`);
 
-    // 阶段三：父章节摘要向量搜索（第三路索引）
-    logger.info('Step 3: Parent content vector search (third index)');
-    const parentSearchResults = await this.parentVectorSearch(fusedResults, { knowledgeBaseId, limit: 5 });
+    let summaryResults = [];
+    let keywordResults = [];
 
-    // 合并父章节搜索结果
-    let allResults = fusedResults;
-    if (parentSearchResults.length > 0) {
-      logger.info(`[阶段三] 添加 ${parentSearchResults.length} 条父章节搜索结果`);
-      // 将父章节结果与现有结果合并（去重）
-      const existingIds = new Set(allResults.map(r => r.chunkId || r.id));
-      const newParentResults = parentSearchResults.filter(r => !existingIds.has(r.chunkId || r.id));
-      allResults = [...allResults, ...newParentResults.map(r => ({ ...r, sources: ['parent'] }))];
-      logger.info(`[阶段三] 合并后总共 ${allResults.length} 条结果`);
+    if (qdrantResults.length > 0) {
+      logger.info('Step 3: Building LlamaIndex Nodes for multi-strategy retrieval');
+      const llamaNodes = llamaindexService.buildNodesFromChunks(
+        qdrantResults.map(r => ({ ...r, documentId: r.documentId || knowledgeBaseId })),
+        knowledgeBaseId || 'general'
+      );
+
+      try {
+        logger.info('Step 3a: Summary-based semantic re-ranking');
+        const summaryReRanker = llamaindexService.buildSummaryReRanker(llamaNodes);
+        const summaryRaw = llamaindexService.summaryReRank(summaryReRanker, rewrittenQuery, { limit: 30 });
+        summaryResults = summaryRaw.map(r => {
+          const original = qdrantResults.find(q => (q.chunkId || q.id) === r.id);
+          return {
+            id: r.id,
+            chunkId: r.id,
+            content: r.text,
+            ...(r.metadata || {}),
+            ...(original || {}),
+            summaryScore: r.score,
+          };
+        }).filter(r => r.content);
+        logger.info(`Summary re-ranking returned ${summaryResults.length} results`);
+      } catch (e) {
+        logger.warn('Summary re-ranking failed, skipping:', e.message);
+        summaryResults = qdrantResults.map(r => ({ ...r }));
+      }
+
+      try {
+        logger.info('Step 3b: Keyword inverted index retrieval');
+        const keywordIndexData = llamaindexService.buildKeywordInvertedIndex(llamaNodes);
+        const keywordRaw = llamaindexService.keywordRetrieve(keywordIndexData, rewrittenQuery, { limit: 30 });
+        keywordResults = keywordRaw.map(r => {
+          const original = qdrantResults.find(q => (q.chunkId || q.id) === r.id);
+          return {
+            id: r.id,
+            chunkId: r.id,
+            content: r.text,
+            ...(r.metadata || {}),
+            ...(original || {}),
+            keywordScore: r.score,
+          };
+        }).filter(r => r.content);
+        logger.info(`Keyword retrieval returned ${keywordResults.length} results`);
+      } catch (e) {
+        logger.warn('Keyword retrieval failed, skipping:', e.message);
+        keywordResults = qdrantResults.map(r => ({ ...r }));
+      }
     }
 
-    // 阶段二：层级回溯增强
-    logger.info('Step 4: Hierarchy enhancement');
+    logger.info('Step 4: Three-way RRF fusion (Qdrant vector + Summary semantic + Keyword match)');
+    const allResults = rrfFusionThree(
+      qdrantResults,
+      summaryResults,
+      keywordResults,
+      { k: 60 }
+    );
+    logger.info(`Three-way RRF fusion completed, ${allResults.length} unique results`);
+
+    logger.info('Step 5: Parent content vector search (hierarchy enhancement)');
+    const parentSearchResults = await this.parentVectorSearch(allResults, { knowledgeBaseId, limit: 5 });
+
+    if (parentSearchResults.length > 0) {
+      logger.info(`[阶段五] 添加 ${parentSearchResults.length} 条父章节搜索结果`);
+      const existingIds = new Set(allResults.map(r => r.chunkId || r.id));
+      const newParentResults = parentSearchResults.filter(r => !existingIds.has(r.chunkId || r.id));
+      allResults.push(...newParentResults.map(r => ({ ...r, sources: [...(r.sources || []), 'parent'] })));
+      logger.info(`[阶段五] 合并后总共 ${allResults.length} 条结果`);
+    }
+
+    logger.info('Step 6: Hierarchy level boost');
     const enhancedResults = enhanceByHierarchy(allResults, { levelBoost: 0.1 });
 
-    // Step 5: 重排序（使用 BGE-Reranker-v2-m3）
     const rerankedResults = await rerankService.rerank(rewrittenQuery, enhancedResults);
 
-    // 取top-k结果
     const finalResults = rerankedResults.slice(0, limit);
     logger.info(`Hybrid search completed, ${finalResults.length} final results`);
 
     return finalResults;
   },
 
-  /**
-   * 阶段三：父章节摘要向量搜索
-   * 对于检索到的每个子章节，如果有父章节内容，进行向量搜索
-   * 返回与父章节相关的其他子章节（兄弟节点）
-   * 
-   * @param {Array} fusedResults - RRF融合后的结果
-   * @param {Object} options - 检索选项
-   * @returns {Promise<Array>} 父章节搜索结果
-   */
   async parentVectorSearch(fusedResults, options = {}) {
     const { knowledgeBaseId, limit = 5 } = options;
-    
+
     if (!fusedResults || fusedResults.length === 0) {
       return [];
     }
 
-    // 收集所有已有的 chunk IDs，用于去重
     const existingIds = new Set(fusedResults.map(r => r.chunkId || r.id));
 
-    // 找出有父章节内容的子章节
     const chunksWithParent = fusedResults.filter(
       r => r.level > 0 && r.parentContent && r.parentContent.trim().length > 0
     );
@@ -235,20 +360,18 @@ const retrievalService = {
 
     logger.info(`[阶段三] 发现 ${chunksWithParent.length} 个子章节有父章节内容`);
 
-    // 对每个有父章节的子章节进行向量搜索
     const allParentResults = [];
     for (const chunk of chunksWithParent) {
       try {
-        const parentResults = await vectorStoreService.searchByParentContent(
+        const parentResults = await qdrantService.searchByParentContent(
           chunk.parentContent,
-          Array.from(existingIds),  // 排除已有结果
+          Array.from(existingIds),
           { knowledgeBaseId, limit }
         );
-        
+
         if (parentResults.length > 0) {
           logger.info(`[阶段三] 子章节 "${chunk.title}" 的父章节搜索返回 ${parentResults.length} 条结果`);
           allParentResults.push(...parentResults);
-          // 更新已排除的 IDs
           parentResults.forEach(r => existingIds.add(r.chunkId || r.id));
         }
       } catch (error) {
@@ -256,7 +379,6 @@ const retrievalService = {
       }
     }
 
-    // 去重并返回
     const uniqueResults = [];
     const seenIds = new Set();
     for (const result of allParentResults) {
@@ -271,11 +393,18 @@ const retrievalService = {
     return uniqueResults;
   },
 
+  computeConfidence(chunks, query, options) {
+    return computeConfidence(chunks, query, options);
+  },
+
+  evaluateRelevance(chunks, query) {
+    return evaluateRelevance(chunks, query);
+  },
+
   getConfig() {
     return {
       embeddingService: embeddingService.getConfig(),
-      vectorStoreService: vectorStoreService.getConfig(),
-      bm25Service: bm25Service.getStats(),
+      qdrantService: qdrantService.getConfig(),
       queryRewriteService: queryRewriteService.getConfig(),
       rerankService: rerankService.getConfig(),
     };

@@ -606,6 +606,18 @@ const chatService = {
       return { query, chunks: [], answer: null, references: [], message: "暂无相关信息" };
     }
 
+    // 置信度评估
+    const confidence = retrievalService.computeConfidence(chunks, query, { limit: topK });
+    logger.info(`[置信度评估] level=${confidence.level} score=${confidence.score} reason=${confidence.reason}`);
+
+    if (confidence.shouldReject) {
+      if (userId) {
+        const chat = await this.saveChat(userId, knowledgeBaseId, query, null, [], chatId);
+        return { query, chunks: [], answer: null, references: [], message: "暂无相关信息", chatId: chat._id, confidence: null };
+      }
+      return { query, chunks: [], answer: null, references: [], message: "暂无相关信息", confidence: null };
+    }
+
     const promptWithHistory = buildPromptWithHistory(query, chunks, historyMessages);
 
     const prompt = promptWithHistory;
@@ -647,7 +659,7 @@ const chatService = {
         savedChatId = chat._id;
       }
 
-      return { query, chunks, answer, references, message: null, chatId: savedChatId };
+      return { query, chunks, answer, references, message: null, chatId: savedChatId, confidence };
     } catch (error) {
       clearTimeout(timeoutId);
       if (error.name === "AbortError") {
@@ -687,6 +699,17 @@ const chatService = {
         return { chatId: inputChatId };
       }
 
+      // 置信度评估
+      const confidence = retrievalService.computeConfidence(chunks, query, { limit: topK });
+      logger.info(`[置信度评估] level=${confidence.level} score=${confidence.score} reason=${confidence.reason}`);
+
+      if (confidence.shouldReject) {
+        if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "end", content: "暂无相关信息" } }));
+        if (onEnd) onEnd();
+        if (userId) await this.saveChat(userId, knowledgeBaseId, query, null, [], inputChatId);
+        return { chatId: inputChatId, confidence: null };
+      }
+
       let savedChatId = inputChatId || null;
       if (userId) {
         const chat = await this.saveChat(userId, knowledgeBaseId, query, null, chunks, inputChatId);
@@ -695,6 +718,11 @@ const chatService = {
       }
 
       const promptWithHistory = buildPromptWithHistory(query, chunks, historyMessages);
+
+      // 流式响应：在开头发送置信度信息
+      if (onChunk) {
+        onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "confidence", content: confidence } }));
+      }
 
       const prompt = promptWithHistory;
       logger.info("Sending prompt to LLM (streaming)...");

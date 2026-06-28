@@ -7,8 +7,7 @@ const routes = require('./src/routes');
 const { errorHandler, notFoundHandler } = require('./src/middleware/errorHandler');
 const { requestLogger, errorLogger } = require('./src/middleware/logger');
 const logger = require('./src/utils/logger');
-const vectorStoreService = require('./src/services/vectorStoreService');
-const bm25Service = require('./src/services/bm25Service');
+const qdrantService = require('./src/services/qdrantService');
 
 // 加载环境变量
 dotenv.config();
@@ -57,11 +56,9 @@ const startServer = async () => {
     await connectDB();
     logger.info('MongoDB 连接成功');
     
-    // 初始化 LanceDB
-    await vectorStoreService.initialize();
-    
-    // 从 LanceDB 重建 BM25 索引
-    await bm25Service.rebuildFromVectorStore(vectorStoreService);
+    // 初始化 Qdrant
+    await qdrantService.initialize();
+    logger.info('Qdrant 初始化成功');
     
     // 启动服务器
     app.listen(PORT, () => {

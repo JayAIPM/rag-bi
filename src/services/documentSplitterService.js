@@ -1,5 +1,6 @@
-const { SentenceSplitter } = require('llamaindex');
+const { SentenceSplitter, SimpleNodeParser } = require('llamaindex');
 const logger = require('../utils/logger');
+const llamaindexService = require('./llamaindexService');
 
 // 语义分块服务：负责将文档文本切分成适合向量化处理的块
 const documentSplitterService = {
@@ -315,7 +316,41 @@ const documentSplitterService = {
     }
 
     return sections;
-  }
+  },
+
+  splitWithLlamaIndex(content, options = {}) {
+    logger.info(`LlamaIndex NodeParser splitting, content length: ${content.length}`);
+
+    const {
+      chunkSize = 800,
+      chunkOverlap = 150,
+      metadata = {},
+    } = options;
+
+    const doc = llamaindexService.buildDocument(content, metadata);
+    const nodes = llamaindexService.parseNodesFromDocuments([doc], {
+      chunkSize,
+      chunkOverlap,
+    });
+
+    const chunks = nodes.map((node, index) => ({
+      index,
+      content: node.text,
+      title: node.metadata?.title || '',
+      level: node.metadata?.level || 0,
+      hierarchyPath: node.metadata?.hierarchyPath || '',
+      parentContext: node.metadata?.parentContext || '',
+      start: 0,
+      end: node.text.length,
+      length: node.text.length,
+      nodeId: node.id_,
+      nodeType: node.type,
+      nodeRelationships: node.relationships || {},
+    }));
+
+    logger.info(`LlamaIndex NodeParser split completed, ${chunks.length} chunks`);
+    return chunks;
+  },
 };
 
 module.exports = documentSplitterService;

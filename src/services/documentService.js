@@ -7,8 +7,8 @@ const mongoose = require('mongoose');
 const documentParserService = require('./documentParserService');
 const documentSplitterService = require('./documentSplitterService');
 const embeddingService = require('./embeddingService');
-const vectorStoreService = require('./vectorStoreService');
-const bm25Service = require('./bm25Service');
+const qdrantService = require('./qdrantService');
+const llamaindexService = require('./llamaindexService');
 
 // 文档服务：处理文档的上传、解析、分块等核心业务逻辑
 const documentService = {
@@ -131,26 +131,20 @@ const documentService = {
         documentId: documentId.toString()
       }));
       
-      // 4. 向量存储到 LanceDB：将向量存储到向量数据库
-      logger.info(`Step 4: Storing vectors to LanceDB for document ${documentId}`);
-      await vectorStoreService.storeChunks(chunksWithEmbeddings);
-      logger.info(`Successfully stored vectors for document ${documentId}`);
+      // 4. 存储到 Qdrant（稠密向量 + 稀疏向量）
+      logger.info(`Step 4: Storing chunks to Qdrant for document ${documentId}`);
+      await qdrantService.storeChunks(chunksWithEmbeddings);
+      logger.info(`Successfully stored chunks to Qdrant for document ${documentId}`);
       
-      // 5. BM25 索引构建：将文档块添加到 BM25 索引
-      logger.info(`Step 5: Building BM25 index for document ${documentId}`);
-      const bm25Chunks = chunks.map((chunk, index) => ({
-        id: `${documentId}_${index}`,
+      // 5. 构建 LlamaIndex Document 和 Nodes（用于 SummaryIndex/KeywordTableIndex）
+      logger.info(`Step 5: Building LlamaIndex Document and Nodes for document ${documentId}`);
+      const llamaDoc = llamaindexService.buildDocument(content, {
         documentId: documentId.toString(),
-        chunkIndex: index,
-        content: chunk.content,
-        title: chunk.title || '',
-        start: chunk.start || 0,
-        end: chunk.end || 0,
-        hierarchyPath: chunk.hierarchyPath || '',  // 层级路径
-        parentContext: chunk.parentContext || ''    // 父级上下文
-      }));
-      bm25Service.addChunks(bm25Chunks);
-      logger.info(`Successfully built BM25 index for document ${documentId}`);
+        documentName: document.name,
+        source: document.type,
+      });
+      const llamaNodes = llamaindexService.buildNodesFromChunks(chunks, documentId.toString());
+      logger.info(`LlamaIndex Document and ${llamaNodes.length} Nodes built for document ${documentId}`);
       
       await Document.findByIdAndUpdate(documentId, { 
         status: 'completed',
@@ -247,11 +241,8 @@ const documentService = {
       logger.info(`File deleted: ${document.path}`);
     }
 
-    await vectorStoreService.deleteByDocumentId(id.toString());
-    logger.info(`Deleted vectors from LanceDB for document: ${id}`);
-    
-    await bm25Service.deleteByDocumentId(id.toString());
-    logger.info(`Deleted chunks from BM25 index for document: ${id}`);
+    await qdrantService.deleteByDocumentId(id.toString());
+    logger.info(`Deleted vectors from Qdrant for document: ${id}`);
 
     await Document.findByIdAndDelete(id);
 
