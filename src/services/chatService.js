@@ -1,6 +1,7 @@
 const http = require("http");
 const retrievalService = require("./retrievalService");
 const permissionService = require("./permissionService");
+const intentService = require("./intentService");
 const Chat = require("../models/Chat");
 const Document = require("../models/Document");
 const logger = require("../utils/logger");
@@ -651,6 +652,27 @@ const chatService = {
       }
     }
 
+    const intentResult = await intentService.classifyIntent(query);
+    logger.info(`[意图识别] intent=${intentResult.intent}, method=${intentResult.method}, confidence=${(intentResult.confidence || 0).toFixed(3)}`);
+
+    if (intentResult.intent === intentService.INTENT_TYPES.OUT_OF_SCOPE) {
+      const reply = intentResult.reply || '抱歉，这个问题我无法回答。';
+      if (userId) {
+        const chat = await this.saveChat(userId, knowledgeBaseId, query, reply, [], chatId);
+        return { query, chunks: [], answer: reply, references: [], message: null, chatId: chat._id, intent: intentResult.intent };
+      }
+      return { query, chunks: [], answer: reply, references: [], message: null, intent: intentResult.intent };
+    }
+
+    if (intentResult.intent === intentService.INTENT_TYPES.SMALL_TALK && intentResult.reply) {
+      const reply = intentResult.reply;
+      if (userId) {
+        const chat = await this.saveChat(userId, knowledgeBaseId, query, reply, [], chatId);
+        return { query, chunks: [], answer: reply, references: [], message: null, chatId: chat._id, intent: intentResult.intent };
+      }
+      return { query, chunks: [], answer: reply, references: [], message: null, intent: intentResult.intent };
+    }
+
     const chunks = await this.buildContext(query, { knowledgeBaseId, topK, userId, userRole });
 
     if (chunks.length === 0) {
@@ -744,6 +766,27 @@ const chatService = {
             historyMessages = historyChat.messages;
             logger.info(`Loaded ${historyMessages.length} historical messages for chat ${inputChatId}`);
           }
+        }
+
+        const intentResult = await intentService.classifyIntent(query);
+        logger.info(`[意图识别] intent=${intentResult.intent}, method=${intentResult.method}, confidence=${(intentResult.confidence || 0).toFixed(3)}`);
+
+        if (intentResult.intent === intentService.INTENT_TYPES.OUT_OF_SCOPE) {
+          const reply = intentResult.reply || '抱歉，这个问题我无法回答。';
+          if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "content", content: reply } }));
+          if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "end", content: reply } }));
+          if (onEnd) onEnd();
+          if (userId) await this.saveChat(userId, knowledgeBaseId, query, reply, [], inputChatId);
+          return { chatId: inputChatId, intent: intentResult.intent };
+        }
+
+        if (intentResult.intent === intentService.INTENT_TYPES.SMALL_TALK && intentResult.reply) {
+          const reply = intentResult.reply;
+          if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "content", content: reply } }));
+          if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "end", content: reply } }));
+          if (onEnd) onEnd();
+          if (userId) await this.saveChat(userId, knowledgeBaseId, query, reply, [], inputChatId);
+          return { chatId: inputChatId, intent: intentResult.intent };
         }
 
         const chunks = await this.buildContext(query, { knowledgeBaseId, topK, userId, userRole });

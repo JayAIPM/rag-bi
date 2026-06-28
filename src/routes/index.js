@@ -10,6 +10,7 @@ const chatRoutes = require('./chat');
 const userRoutes = require('./users');
 const roleRoutes = require('./roles');
 const statsRoutes = require('./stats');
+const qdrantAdminRoutes = require('./qdrantAdmin');
 
 // 注册路由
 router.use('/auth', authRoutes);
@@ -20,5 +21,6 @@ router.use('/chat', chatRoutes);
 router.use('/users', userRoutes);
 router.use('/roles', roleRoutes);
 router.use('/stats', statsRoutes);
+router.use('/admin/qdrant', qdrantAdminRoutes);
 
 module.exports = router;

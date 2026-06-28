@@ -409,6 +409,157 @@ const qdrantService = {
     }
   },
 
+  async getAllCollections() {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    try {
+      const result = await this.client.getCollections();
+      const collections = result.collections || [];
+
+      const detailedCollections = await Promise.all(
+        collections.map(async (col) => {
+          try {
+            const info = await this.client.getCollection(col.name);
+            return {
+              name: col.name,
+              status: info.status,
+              pointsCount: info.points_count || 0,
+              vectorsCount: info.vectors_count || 0,
+              segmentsCount: info.segments_count || 0,
+              config: info.config || {}
+            };
+          } catch (e) {
+            return { name: col.name, status: 'unknown', error: e.message };
+          }
+        })
+      );
+
+      return {
+        total: detailedCollections.length,
+        collections: detailedCollections
+      };
+    } catch (error) {
+      logger.error('Failed to get all collections', error);
+      throw new Error(`获取集合列表失败: ${error.message}`);
+    }
+  },
+
+  async getCollectionInfo(name) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    try {
+      const info = await this.client.getCollection(name);
+      return {
+        name,
+        status: info.status,
+        optimizerStatus: info.optimizer_status,
+        pointsCount: info.points_count || 0,
+        vectorsCount: info.vectors_count || 0,
+        indexedVectorsCount: info.indexed_vectors_count || 0,
+        segmentsCount: info.segments_count || 0,
+        payloadSchema: info.payload_schema || {},
+        config: info.config || {}
+      };
+    } catch (error) {
+      logger.error(`Failed to get collection info: ${name}`, error);
+      throw new Error(`获取集合详情失败: ${error.message}`);
+    }
+  },
+
+  async getCollectionPoints(name, options = {}) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const { limit = 20, offset, withVector = false, knowledgeBaseId, documentId } = options;
+
+    try {
+      const scrollOptions = {
+        limit,
+        with_payload: true,
+        with_vector: withVector
+      };
+
+      if (offset) {
+        scrollOptions.offset = offset;
+      }
+
+      if (knowledgeBaseId || documentId) {
+        const must = [];
+        if (knowledgeBaseId) {
+          must.push({ key: 'knowledgeBaseId', match: { value: knowledgeBaseId } });
+        }
+        if (documentId) {
+          must.push({ key: 'documentId', match: { value: documentId } });
+        }
+        scrollOptions.filter = { must };
+      }
+
+      const { points, next_page_offset } = await this.client.scroll(name, scrollOptions);
+
+      return {
+        total: points.length,
+        hasMore: !!next_page_offset,
+        nextOffset: next_page_offset || null,
+        points: points.map(point => ({
+          id: point.id,
+          payload: point.payload,
+          vector: point.vectors || null,
+          score: point.score
+        }))
+      };
+    } catch (error) {
+      logger.error(`Failed to get collection points: ${name}`, error);
+      throw new Error(`获取集合数据失败: ${error.message}`);
+    }
+  },
+
+  async getCollectionStats(name) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    try {
+      const info = await this.client.getCollection(name);
+      const clusterInfo = await this.client.clusterInfo().catch(() => null);
+
+      return {
+        name,
+        status: info.status,
+        pointsCount: info.points_count || 0,
+        vectorsCount: info.vectors_count || 0,
+        indexedVectorsCount: info.indexed_vectors_count || 0,
+        segmentsCount: info.segments_count || 0,
+        diskDataSize: info.disk_data_size || 0,
+        ramDataSize: info.ram_data_size || 0,
+        cluster: clusterInfo || null
+      };
+    } catch (error) {
+      logger.error(`Failed to get collection stats: ${name}`, error);
+      throw new Error(`获取集合统计失败: ${error.message}`);
+    }
+  },
+
+  async deleteCollection(name) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    logger.warn(`Deleting collection: ${name}`);
+
+    try {
+      const result = await this.client.deleteCollection(name);
+      return { success: true, result };
+    } catch (error) {
+      logger.error(`Failed to delete collection: ${name}`, error);
+      throw new Error(`删除集合失败: ${error.message}`);
+    }
+  },
+
   getConfig() {
     return {
       url: QDRANT_CONFIG.url,
