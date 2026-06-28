@@ -128,7 +128,8 @@ const documentService = {
       const chunksWithEmbeddings = chunks.map((chunk, index) => ({
         ...chunk,
         embedding: embeddings[index],
-        documentId: documentId.toString()
+        documentId: documentId.toString(),
+        knowledgeBaseId: document.knowledgeBaseId?.toString() || ''
       }));
       
       // 4. 存储到 Qdrant（稠密向量 + 稀疏向量）

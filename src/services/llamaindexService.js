@@ -100,14 +100,14 @@ const llamaindexService = {
     return nodes;
   },
 
-  buildNodesFromChunks(chunks, documentId) {
-    logger.info(`Building ${chunks.length} TextNode objects from chunks, documentId: ${documentId}`);
+  buildNodesFromChunks(chunks, defaultDocumentId = '') {
+    logger.info(`Building ${chunks.length} TextNode objects from chunks`);
 
     const nodes = chunks.map((chunk, index) => {
       const node = new TextNode({
         text: chunk.content || '',
         metadata: {
-          documentId: String(documentId),
+          documentId: String(chunk.documentId || defaultDocumentId),
           chunkIndex: Number(chunk.index ?? index),
           title: String(chunk.title || ''),
           level: Number(chunk.level || 0),
@@ -199,7 +199,7 @@ const llamaindexService = {
   },
 
   buildSummaryReRanker(nodes) {
-    logger.info(`Building summary-based re-ranker from ${nodes.length} nodes`);
+    logger.debug(`Building summary-based re-ranker from ${nodes.length} nodes`);
     
     const enrichedNodes = nodes.map(node => {
       const metadata = node.metadata || {};
@@ -219,13 +219,13 @@ const llamaindexService = {
       };
     });
 
-    logger.info('Summary-based re-ranker built');
+    logger.debug('Summary-based re-ranker built');
     return enrichedNodes;
   },
 
   summaryReRank(enrichedNodes, query, options = {}) {
     const { limit = 10 } = options;
-    logger.info(`Summary-based re-ranking: query="${query}", ${enrichedNodes.length} candidates`);
+    logger.debug(`Summary-based re-ranking: query="${query}", ${enrichedNodes.length} candidates`);
 
     const queryKeywords = extractKeywords(query, 20);
     logger.debug(`Query keywords: ${queryKeywords.join(', ')}`);
@@ -258,12 +258,12 @@ const llamaindexService = {
     scored.sort((a, b) => b.score - a.score);
     const results = scored.slice(0, limit);
     
-    logger.info(`Summary re-ranking completed: top ${results.length} results, best score=${results[0]?.score?.toFixed?.(3) || 0}`);
+    logger.debug(`Summary re-ranking completed: top ${results.length} results, best score=${results[0]?.score?.toFixed?.(3) || 0}`);
     return results;
   },
 
   buildKeywordInvertedIndex(nodes) {
-    logger.info(`Building keyword inverted index from ${nodes.length} nodes`);
+    logger.debug(`Building keyword inverted index from ${nodes.length} nodes`);
     
     const invertedIndex = new Map();
     const nodeMap = new Map();
@@ -294,13 +294,13 @@ const llamaindexService = {
       });
     });
 
-    logger.info(`Keyword inverted index built: ${invertedIndex.size} keywords, ${nodeMap.size} nodes`);
+    logger.debug(`Keyword inverted index built: ${invertedIndex.size} keywords, ${nodeMap.size} nodes`);
     return { invertedIndex, nodeMap };
   },
 
   keywordRetrieve(indexData, query, options = {}) {
     const { limit = 10 } = options;
-    logger.info(`Keyword retrieval: query="${query}", limit=${limit}`);
+    logger.debug(`Keyword retrieval: query="${query}", limit=${limit}`);
 
     const { invertedIndex, nodeMap } = indexData;
     const queryKeywords = extractKeywords(query, 20);
@@ -335,7 +335,7 @@ const llamaindexService = {
     results.sort((a, b) => b.score - a.score);
     const topResults = results.slice(0, limit);
     
-    logger.info(`Keyword retrieval completed: ${topResults.length} results, best score=${topResults[0]?.score?.toFixed?.(3) || 0}`);
+    logger.debug(`Keyword retrieval completed: ${topResults.length} results, best score=${topResults[0]?.score?.toFixed?.(3) || 0}`);
     return topResults;
   },
 

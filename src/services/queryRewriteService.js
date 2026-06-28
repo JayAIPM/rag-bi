@@ -31,6 +31,41 @@ function createOllamaRequestOptions() {
 }
 
 /**
+ * 从 Ollama 响应中提取干净的文本内容
+ * 处理推理模型（如 deepseek-r1）的思考过程
+ * @param {string} response - 原始响应文本
+ * @returns {string} 干净的文本内容
+ */
+function extractCleanContent(response) {
+  if (!response) return '';
+  
+  let cleanText = response;
+  
+  // 去除思考过程标签（deepseek-r1 等推理模型）
+  // 匹配 <think>...</think> 格式（可能有换行）
+  cleanText = cleanText.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  
+  // 去除常见的思考前缀
+  const thinkPrefixes = [
+    /^(思考中|让我想想|先分析一下|我来分析)：?\s*/i,
+    /^(分析|思考| reasoning)：\s*/i,
+    /^think\s*/i,
+  ];
+  
+  thinkPrefixes.forEach(prefix => {
+    cleanText = cleanText.replace(prefix, '');
+  });
+  
+  // 去除多余空白字符
+  cleanText = cleanText
+    .replace(/\n{3,}/g, '\n\n')  // 超过2个连续换行改为2个
+    .replace(/^\s+|\s+$/g, '')    // 去除首尾空白
+    .trim();
+  
+  return cleanText;
+}
+
+/**
  * 调用 Ollama API 进行查询重写
  * @param {string} originalQuery - 原始查询
  * @returns {Promise<string>} 重写后的查询
@@ -79,7 +114,20 @@ function rewriteQueryWithOllama(originalQuery) {
           }
           
           // 提取重写后的查询
-          const rewrittenQuery = parsed.response?.trim() || originalQuery;
+          let rewrittenQuery = parsed.response?.trim() || originalQuery;
+          
+          // ✅ 新增：从响应中提取干净的内容（去除思考过程）
+          const cleanQuery = extractCleanContent(rewrittenQuery);
+          if (cleanQuery && cleanQuery !== rewrittenQuery) {
+            logger.info('   🔧 已去除推理模型的思考过程');
+            rewrittenQuery = cleanQuery;
+          }
+          
+          // 如果清理后为空，使用原始查询
+          if (!rewrittenQuery || !rewrittenQuery.trim()) {
+            logger.warn('   ⚠️  重写结果为空，使用原始查询');
+            rewrittenQuery = originalQuery;
+          }
           
           logger.info('   ✅ 成功获取重写结果');
           logger.info(`   原始查询: "${originalQuery}"`);
@@ -148,6 +196,14 @@ const queryRewriteService = {
     
     if (!originalQuery || !originalQuery.trim()) {
       logger.info('   ⚠️  查询为空，跳过重写');
+      logger.info('========================================\n');
+      return originalQuery;
+    }
+    
+    // ✅ 优化：对于纯英文查询跳过重写（英文查询通常语义已经清晰）
+    const hasChinese = /[\u4e00-\u9fa5]/.test(originalQuery);
+    if (!hasChinese) {
+      logger.info('   ℹ️  检测为纯英文查询，跳过重写（英文语义通常已足够清晰）');
       logger.info('========================================\n');
       return originalQuery;
     }

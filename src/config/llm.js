@@ -2,10 +2,11 @@ const path = require("path");
 
 const LLM_CONFIG = {
   ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434",
-  chatModel: process.env.LLM_MODEL || "qwen3.5:4b",
+  chatModel: process.env.LLM_MODEL || "gemma4:12b-mlx",
   llmTimeout: parseInt(process.env.LLM_TIMEOUT) || 120000,
   chunkTimeout: parseInt(process.env.CHUNK_TIMEOUT) || 30000,
-  maxAnswerLength: parseInt(process.env.MAX_ANSWER_LENGTH) || 800,
+  maxAnswerLength: parseInt(process.env.MAX_ANSWER_LENGTH) || 1000,
+  contextWindowSize: parseInt(process.env.CONTEXT_WINDOW_SIZE) || 8192,
 };
 
 // 查询重写配置
@@ -28,7 +29,8 @@ const RERANK_CONFIG = {
 
 const RETRIEVAL_CONFIG = {
   defaultTopK: 6,
-  defaultMaxToken: 200,
+  defaultMaxToken: 800,
+  maxContextTokens: 6000,
 };
 
 const SYSTEM_PROMPT = `【系统提示词】

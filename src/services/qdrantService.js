@@ -165,6 +165,7 @@ const qdrantService = {
           payload: {
             id: chunkId,
             documentId: String(chunk.documentId),
+            knowledgeBaseId: String(chunk.knowledgeBaseId || ''),
             chunkIndex: Number(chunk.index ?? index),
             content: String(chunk.content || ''),
             title: String(chunk.title || ''),
@@ -245,7 +246,7 @@ const qdrantService = {
       if (knowledgeBaseId) {
         searchOptions.filter = {
           must: [
-            { key: 'documentId', match: { prefix: knowledgeBaseId } }
+            { key: 'knowledgeBaseId', match: { value: knowledgeBaseId } }
           ]
         };
       }
@@ -278,7 +279,7 @@ const qdrantService = {
             using: 'cosine',
             limit: limit * 2,
             filter: knowledgeBaseId ? {
-              must: [{ key: 'documentId', match: { prefix: knowledgeBaseId } }]
+              must: [{ key: 'knowledgeBaseId', match: { value: knowledgeBaseId } }]
             } : undefined
           },
           {
@@ -290,7 +291,7 @@ const qdrantService = {
             using: QDRANT_CONFIG.sparseVectorName,
             limit: limit * 2,
             filter: knowledgeBaseId ? {
-              must: [{ key: 'documentId', match: { prefix: knowledgeBaseId } }]
+              must: [{ key: 'knowledgeBaseId', match: { value: knowledgeBaseId } }]
             } : undefined
           }
         ].filter(p => p.vector),
@@ -368,7 +369,7 @@ const qdrantService = {
       if (knowledgeBaseId || documentId) {
         const must = [];
         if (knowledgeBaseId) {
-          must.push({ key: 'documentId', match: { prefix: knowledgeBaseId } });
+          must.push({ key: 'knowledgeBaseId', match: { value: knowledgeBaseId } });
         }
         if (documentId) {
           must.push({ key: 'documentId', match: { value: documentId } });

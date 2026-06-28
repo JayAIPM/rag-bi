@@ -238,36 +238,36 @@ const retrievalService = {
 
   async hybridSearch(query, options = {}) {
     const { knowledgeBaseId, limit = 6, k = 60 } = options;
-    logger.info(`Hybrid searching for query: "${query}", knowledgeBaseId: ${knowledgeBaseId || 'all'}, limit: ${limit}, k: ${k}`);
+    logger.info(`Hybrid searching for query: "${query}", knowledgeBaseId: ${knowledgeBaseId || 'all'}, limit: ${limit}`);
 
     const rewrittenQuery = await queryRewriteService.rewriteQuery(query);
     if (rewrittenQuery !== query) {
       logger.info(`Query rewritten: "${query}" -> "${rewrittenQuery}"`);
     }
 
-    logger.info('Step 1: Embedding query text');
+    logger.debug('Step 1: Embedding query text');
     const queryEmbedding = await embeddingService.embedText(rewrittenQuery);
 
-    logger.info('Step 2: Qdrant hybrid search (dense + sparse + RRF fusion)');
+    logger.debug('Step 2: Qdrant hybrid search (dense + sparse + RRF fusion)');
     const qdrantResults = await qdrantService.hybridSearch(queryEmbedding, rewrittenQuery, {
       knowledgeBaseId,
       limit: 30,
       fusion: 'rrf'
     });
-    logger.info(`Qdrant returned ${qdrantResults.length} results`);
+    logger.debug(`Qdrant returned ${qdrantResults.length} results`);
 
     let summaryResults = [];
     let keywordResults = [];
 
     if (qdrantResults.length > 0) {
-      logger.info('Step 3: Building LlamaIndex Nodes for multi-strategy retrieval');
+      logger.debug('Step 3: Building LlamaIndex Nodes for multi-strategy retrieval');
       const llamaNodes = llamaindexService.buildNodesFromChunks(
         qdrantResults.map(r => ({ ...r, documentId: r.documentId || knowledgeBaseId })),
         knowledgeBaseId || 'general'
       );
 
       try {
-        logger.info('Step 3a: Summary-based semantic re-ranking');
+        logger.debug('Step 3a: Summary-based semantic re-ranking');
         const summaryReRanker = llamaindexService.buildSummaryReRanker(llamaNodes);
         const summaryRaw = llamaindexService.summaryReRank(summaryReRanker, rewrittenQuery, { limit: 30 });
         summaryResults = summaryRaw.map(r => {
@@ -281,14 +281,14 @@ const retrievalService = {
             summaryScore: r.score,
           };
         }).filter(r => r.content);
-        logger.info(`Summary re-ranking returned ${summaryResults.length} results`);
+        logger.debug(`Summary re-ranking returned ${summaryResults.length} results`);
       } catch (e) {
         logger.warn('Summary re-ranking failed, skipping:', e.message);
         summaryResults = qdrantResults.map(r => ({ ...r }));
       }
 
       try {
-        logger.info('Step 3b: Keyword inverted index retrieval');
+        logger.debug('Step 3b: Keyword inverted index retrieval');
         const keywordIndexData = llamaindexService.buildKeywordInvertedIndex(llamaNodes);
         const keywordRaw = llamaindexService.keywordRetrieve(keywordIndexData, rewrittenQuery, { limit: 30 });
         keywordResults = keywordRaw.map(r => {
@@ -302,40 +302,40 @@ const retrievalService = {
             keywordScore: r.score,
           };
         }).filter(r => r.content);
-        logger.info(`Keyword retrieval returned ${keywordResults.length} results`);
+        logger.debug(`Keyword retrieval returned ${keywordResults.length} results`);
       } catch (e) {
         logger.warn('Keyword retrieval failed, skipping:', e.message);
         keywordResults = qdrantResults.map(r => ({ ...r }));
       }
     }
 
-    logger.info('Step 4: Three-way RRF fusion (Qdrant vector + Summary semantic + Keyword match)');
+    logger.debug('Step 4: Three-way RRF fusion (Qdrant vector + Summary semantic + Keyword match)');
     const allResults = rrfFusionThree(
       qdrantResults,
       summaryResults,
       keywordResults,
       { k: 60 }
     );
-    logger.info(`Three-way RRF fusion completed, ${allResults.length} unique results`);
+    logger.debug(`Three-way RRF fusion completed, ${allResults.length} unique results`);
 
-    logger.info('Step 5: Parent content vector search (hierarchy enhancement)');
+    logger.debug('Step 5: Parent content vector search (hierarchy enhancement)');
     const parentSearchResults = await this.parentVectorSearch(allResults, { knowledgeBaseId, limit: 5 });
 
     if (parentSearchResults.length > 0) {
-      logger.info(`[阶段五] 添加 ${parentSearchResults.length} 条父章节搜索结果`);
+      logger.debug(`[阶段五] 添加 ${parentSearchResults.length} 条父章节搜索结果`);
       const existingIds = new Set(allResults.map(r => r.chunkId || r.id));
       const newParentResults = parentSearchResults.filter(r => !existingIds.has(r.chunkId || r.id));
       allResults.push(...newParentResults.map(r => ({ ...r, sources: [...(r.sources || []), 'parent'] })));
-      logger.info(`[阶段五] 合并后总共 ${allResults.length} 条结果`);
+      logger.debug(`[阶段五] 合并后总共 ${allResults.length} 条结果`);
     }
 
-    logger.info('Step 6: Hierarchy level boost');
+    logger.debug('Step 6: Hierarchy level boost');
     const enhancedResults = enhanceByHierarchy(allResults, { levelBoost: 0.1 });
 
     const rerankedResults = await rerankService.rerank(rewrittenQuery, enhancedResults);
 
     const finalResults = rerankedResults.slice(0, limit);
-    logger.info(`Hybrid search completed, ${finalResults.length} final results`);
+    logger.info(`Hybrid search completed: qdrant=${qdrantResults.length} candidates, ${finalResults.length} final results`);
 
     return finalResults;
   },

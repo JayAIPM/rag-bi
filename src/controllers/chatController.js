@@ -63,11 +63,15 @@ const chatController = {
     const markSaved = () => { saved = true; };
 
     const sendChunk = (data) => {
-      res.write(`data: ${data}\n\n`);
+      if (!res.writableEnded) {
+        res.write(`data: ${data}\n\n`);
+      }
     };
 
     const sendEnd = () => {
-      res.end();
+      if (!res.writableEnded) {
+        res.end();
+      }
     };
 
     try {
@@ -95,8 +99,12 @@ const chatController = {
 
       await promise;
     } catch (error) {
-      res.write(`data: ${JSON.stringify({ code: 500, msg: error.message, data: null })}\n\n`);
-      res.end();
+      logger.error('chatController.askStream error:', error);
+      const errorData = JSON.stringify({ code: 500, msg: error.message || '处理请求时发生错误', data: null });
+      if (!res.writableEnded) {
+        res.write(`data: ${errorData}\n\n`);
+        res.end();
+      }
     }
   },
 

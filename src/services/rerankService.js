@@ -146,24 +146,13 @@ const rerankService = {
    * @returns {Promise<Array>} 排序后的文档列表
    */
   async rerank(query, candidates, options = {}) {
-    logger.info('========================================');
-    logger.info('           重排序服务启动');
-    logger.info('========================================');
-    
-    // 如果功能不可用或未启用，直接返回原始结果
     if (!RERANK_FEATURE_AVAILABLE) {
-      logger.warn('⚠️  重排序功能暂不可用');
-      logger.warn('   原因: Ollama 不支持 /api/rerank 端点');
-      logger.warn('   继续使用原始搜索结果');
-      logger.info('========================================\n');
+      logger.debug('重排序功能暂不可用（Ollama 不支持 /api/rerank 端点），使用原始排序结果');
       return candidates;
     }
     
-    // 如果未启用重排序，直接返回原始结果
     if (!enabled) {
-      logger.warn('⚠️  重排序功能已禁用，返回原始结果');
-      logger.warn('   如需启用，请设置环境变量: RERANK_ENABLED=true');
-      logger.info('========================================\n');
+      logger.debug('重排序功能已禁用，使用原始排序结果');
       return candidates;
     }
     

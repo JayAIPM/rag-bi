@@ -7,8 +7,8 @@ const logger = require("../utils/logger");
 const { LLM_CONFIG, RETRIEVAL_CONFIG, SYSTEM_PROMPT } = require("../config/llm");
 const { LLMTimeoutError, LLMConnectionError, StreamInterruptedError } = require("../utils/error");
 
-const { ollamaUrl, chatModel, llmTimeout, chunkTimeout, maxAnswerLength } = LLM_CONFIG;
-const { defaultTopK, defaultMaxToken } = RETRIEVAL_CONFIG;
+const { ollamaUrl, chatModel, llmTimeout, chunkTimeout, maxAnswerLength, contextWindowSize } = LLM_CONFIG;
+const { defaultTopK, defaultMaxToken, maxContextTokens } = RETRIEVAL_CONFIG;
 
 /**
  * 截断文本
@@ -44,12 +44,27 @@ function getHierarchyPrefix(level) {
  * @param {Array} chunks - 检索到的文档块
  * @returns {string} 格式化的上下文字符串
  */
-function buildContext(chunks) {
+function buildContext(chunks, maxTotalTokens = maxContextTokens) {
   if (!chunks || chunks.length === 0) {
     return "无相关参考信息";
   }
 
-  // 按文档和层级排序，便于形成树形结构
+  const avgCharsPerToken = 1.8;
+  const maxTotalChars = maxTotalTokens * avgCharsPerToken;
+  const systemPromptOverhead = SYSTEM_PROMPT.length + 200;
+  const userQueryOverhead = 200;
+  const answerOverhead = maxAnswerLength * 1.5;
+  const historyOverheadPerMsg = 300;
+  const maxHistoryMessages = 10;
+  const historyOverhead = maxHistoryMessages * historyOverheadPerMsg;
+  
+  const availableContextChars = Math.max(
+    500,
+    maxTotalChars - systemPromptOverhead - userQueryOverhead - answerOverhead - historyOverhead
+  );
+  
+  logger.debug(`Context budget: ${Math.round(availableContextChars)} chars (${maxTotalTokens} tokens total)`);
+
   const sortedChunks = [...chunks].sort((a, b) => {
     if (a.documentId !== b.documentId) {
       return (a.documentId || "").localeCompare(b.documentId || "");
@@ -57,36 +72,52 @@ function buildContext(chunks) {
     return (a.level || 0) - (b.level || 0);
   });
 
-  return sortedChunks
-    .map((chunk, index) => {
-      const truncatedContent = truncateText(chunk.content || "");
-      const docName = chunk.documentName || "未知文档";
-      const level = chunk.level || 0;
+  const contextBlocks = [];
+  let totalChars = 0;
 
-      // 构建层级信息（带缩进的树形结构）
-      let sectionInfo = "";
-      if (chunk.hierarchyPath) {
-        // 将路径拆分为各级标题，添加缩进前缀
-        const pathParts = chunk.hierarchyPath.split(" / ");
-        sectionInfo = pathParts
-          .map((part, i) => {
-            const prefix = getHierarchyPrefix(i);
-            return `${prefix}${part}`;
-          })
-          .join("\n");
-      }
+  for (let i = 0; i < sortedChunks.length; i++) {
+    const chunk = sortedChunks[i];
+    const docName = chunk.documentName || "未知文档";
+    const level = chunk.level || 0;
 
-      // 构建完整上下文（带缩进层级展示）
-      const indexLabel = `[${index + 1}]`;
-      let contextBlock = `${indexLabel} 📄 ${docName}`;
-      if (sectionInfo) {
-        contextBlock += `\n${sectionInfo}`;
-      }
-      contextBlock += `\n${getHierarchyPrefix(level)}📝 ${truncatedContent}`;
+    let sectionInfo = "";
+    if (chunk.hierarchyPath) {
+      const pathParts = chunk.hierarchyPath.split(" / ");
+      sectionInfo = pathParts
+        .map((part, j) => {
+          const prefix = getHierarchyPrefix(j);
+          return `${prefix}${part}`;
+        })
+        .join("\n");
+    }
 
-      return contextBlock;
-    })
-    .join("\n\n");
+    const indexLabel = `[${i + 1}]`;
+    const header = `${indexLabel} 📄 ${docName}${sectionInfo ? `\n${sectionInfo}` : ""}\n${getHierarchyPrefix(level)}📝 `;
+    const headerLength = header.length;
+
+    const remainingChars = availableContextChars - totalChars - headerLength;
+    if (remainingChars <= 50) {
+      logger.debug(`Context budget exhausted at chunk ${i + 1}/${sortedChunks.length}`);
+      break;
+    }
+
+    const contentChars = Math.min(remainingChars, (chunk.content || "").length);
+    const truncatedContent = contentChars < (chunk.content || "").length
+      ? (chunk.content || "").substring(0, contentChars) + "..."
+      : (chunk.content || "");
+
+    const contextBlock = `${header}${truncatedContent}`;
+    contextBlocks.push(contextBlock);
+    totalChars += contextBlock.length;
+  }
+
+  if (contextBlocks.length === 0 && sortedChunks.length > 0) {
+    const first = sortedChunks[0];
+    const truncatedContent = truncateText(first.content || "", Math.floor(availableContextChars / 2));
+    contextBlocks.push(`[1] 📄 ${first.documentName || "未知文档"}\n${getHierarchyPrefix(first.level || 0)}📝 ${truncatedContent}`);
+  }
+
+  return contextBlocks.join("\n\n");
 }
 
 /**
@@ -113,17 +144,33 @@ ${query}
  * @param {Array} historyMessages - 历史对话消息数组
  * @returns {string} 格式化的历史对话字符串
  */
-function buildHistoryContext(historyMessages) {
+function buildHistoryContext(historyMessages, maxHistoryChars = 1500) {
   if (!historyMessages || historyMessages.length === 0) {
     return "";
   }
 
-  return historyMessages
-    .map((msg) => {
-      const role = msg.role === "user" ? "用户" : "助手";
-      return `[${role}]\n${msg.content}`;
-    })
-    .join("\n\n");
+  const recentMessages = historyMessages.slice(-10);
+  const result = [];
+  let totalChars = 0;
+
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    const msg = recentMessages[i];
+    const role = msg.role === "user" ? "用户" : "助手";
+    let content = msg.content || "";
+    
+    const remaining = maxHistoryChars - totalChars;
+    if (remaining < 20) break;
+    
+    if (content.length > remaining) {
+      content = content.substring(0, remaining) + "...";
+    }
+    
+    const line = `[${role}]\n${content}`;
+    result.unshift(line);
+    totalChars += line.length;
+  }
+
+  return result.join("\n\n");
 }
 
 /**
@@ -433,10 +480,18 @@ const chatService = {
 
     const chunks = await retrievalService.hybridSearch(query, { knowledgeBaseId, topK });
 
-    // 根据 documentId 查询文档名称
-    const documentIds = [...new Set(chunks.map((c) => c.documentId))];
-    const documents = await Document.find({ _id: { $in: documentIds } }).select("name");
-    const docNameMap = new Map(documents.map((d) => [d._id.toString(), d.name]));
+    // 根据 documentId 查询文档名称，过滤掉非 ObjectId 的值
+    const documentIds = [...new Set(chunks.map((c) => c.documentId))].filter(id => {
+      if (!id || typeof id !== 'string') return false;
+      return /^[0-9a-fA-F]{24}$/.test(id);
+    });
+    logger.debug(`Found ${documentIds.length} valid document IDs from chunks`);
+
+    let docNameMap = new Map();
+    if (documentIds.length > 0) {
+      const documents = await Document.find({ _id: { $in: documentIds } }).select("name").lean();
+      docNameMap = new Map(documents.map((d) => [d._id.toString(), d.name]));
+    }
 
     // 为每个 chunk 补充 documentName
     const chunksWithNames = chunks.map((chunk) => ({
@@ -681,108 +736,117 @@ const chatService = {
     let cancel;
 
     const promise = (async () => {
-      let historyMessages = [];
-      if (inputChatId) {
-        const historyChat = await this.getChatById(inputChatId, userId);
-        if (historyChat) {
-          historyMessages = historyChat.messages;
-          logger.info(`Loaded ${historyMessages.length} historical messages for chat ${inputChatId}`);
+      try {
+        let historyMessages = [];
+        if (inputChatId) {
+          const historyChat = await this.getChatById(inputChatId, userId);
+          if (historyChat) {
+            historyMessages = historyChat.messages;
+            logger.info(`Loaded ${historyMessages.length} historical messages for chat ${inputChatId}`);
+          }
         }
-      }
 
-      const chunks = await this.buildContext(query, { knowledgeBaseId, topK, userId, userRole });
+        const chunks = await this.buildContext(query, { knowledgeBaseId, topK, userId, userRole });
 
-      if (chunks.length === 0) {
-        if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "end", content: "暂无相关信息" } }));
-        if (onEnd) onEnd();
-        if (userId) await this.saveChat(userId, knowledgeBaseId, query, null, [], inputChatId);
-        return { chatId: inputChatId };
-      }
+        if (chunks.length === 0) {
+          if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "end", content: "暂无相关信息" } }));
+          if (onEnd) onEnd();
+          if (userId) await this.saveChat(userId, knowledgeBaseId, query, null, [], inputChatId);
+          return { chatId: inputChatId };
+        }
 
-      // 置信度评估
-      const confidence = retrievalService.computeConfidence(chunks, query, { limit: topK });
-      logger.info(`[置信度评估] level=${confidence.level} score=${confidence.score} reason=${confidence.reason}`);
+        // 置信度评估
+        const confidence = retrievalService.computeConfidence(chunks, query, { limit: topK });
+        logger.info(`[置信度评估] level=${confidence.level} score=${confidence.score} reason=${confidence.reason}`);
 
-      if (confidence.shouldReject) {
-        if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "end", content: "暂无相关信息" } }));
-        if (onEnd) onEnd();
-        if (userId) await this.saveChat(userId, knowledgeBaseId, query, null, [], inputChatId);
-        return { chatId: inputChatId, confidence: null };
-      }
+        if (confidence.shouldReject) {
+          if (onChunk) onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "end", content: "暂无相关信息" } }));
+          if (onEnd) onEnd();
+          if (userId) await this.saveChat(userId, knowledgeBaseId, query, null, [], inputChatId);
+          return { chatId: inputChatId, confidence: null };
+        }
 
-      let savedChatId = inputChatId || null;
-      if (userId) {
-        const chat = await this.saveChat(userId, knowledgeBaseId, query, null, chunks, inputChatId);
-        savedChatId = chat._id;
-        if (markSaved) markSaved();
-      }
+        let savedChatId = inputChatId || null;
+        if (userId) {
+          const chat = await this.saveChat(userId, knowledgeBaseId, query, null, chunks, inputChatId);
+          savedChatId = chat._id;
+          if (markSaved) markSaved();
+        }
 
-      const promptWithHistory = buildPromptWithHistory(query, chunks, historyMessages);
+        const promptWithHistory = buildPromptWithHistory(query, chunks, historyMessages);
 
-      // 流式响应：在开头发送置信度信息
-      if (onChunk) {
-        onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "confidence", content: confidence } }));
-      }
+        // 流式响应：在开头发送置信度信息
+        if (onChunk) {
+          onChunk(JSON.stringify({ code: 0, msg: "success", data: { type: "confidence", content: confidence } }));
+        }
 
-      const prompt = promptWithHistory;
-      logger.info("Sending prompt to LLM (streaming)...");
-      logger.info("=== 完整 Prompt 内容 ===");
-      logger.info(prompt);
-      logger.info("========================");
+        const prompt = promptWithHistory;
+        logger.info("Sending prompt to LLM (streaming)...");
+        logger.info("=== 完整 Prompt 内容 ===");
+        logger.info(prompt);
+        logger.info("========================");
 
-      const requestOptions = createOllamaRequestOptions();
+        const requestOptions = createOllamaRequestOptions();
 
-      return new Promise((resolve, reject) => {
-        const state = createStreamState(savedChatId, chunks);
+        return new Promise((resolve, reject) => {
+          const state = createStreamState(savedChatId, chunks);
 
-        cancel = () => {
-          clearIdleTimeout(state);
-          if (state.ollamaReq) {
-            state.ollamaReq.destroy();
-          }
-          if (state.chatId && state.fullAnswer && !state.saved) {
-            this.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks)
-              .then(() => {
-                state.saved = true;
-                if (markSaved) markSaved();
-              })
-              .catch((e) => logger.error("Update partial answer (client disconnect) failed:", e));
-          }
-        };
+          cancel = () => {
+            clearIdleTimeout(state);
+            if (state.ollamaReq) {
+              state.ollamaReq.destroy();
+            }
+            if (state.chatId && state.fullAnswer && !state.saved) {
+              this.updateChatAnswer(state.chatId, state.fullAnswer, state.chunks)
+                .then(() => {
+                  state.saved = true;
+                  if (markSaved) markSaved();
+                })
+                .catch((e) => logger.error("Update partial answer (client disconnect) failed:", e));
+            }
+          };
 
-        state.ollamaReq = http.request(requestOptions, async (ollamaRes) => {
-          resetIdleTimeout(state, onChunk, onEnd, reject);
+          state.ollamaReq = http.request(requestOptions, async (ollamaRes) => {
+            resetIdleTimeout(state, onChunk, onEnd, reject);
 
-          ollamaRes.on("data", (chunk) => {
-            handleStreamData(state, chunk, onChunk, onEnd, resolve, reject, markSaved);
+            ollamaRes.on("data", (chunk) => {
+              handleStreamData(state, chunk, onChunk, onEnd, resolve, reject, markSaved);
+            });
+
+            ollamaRes.on("end", async () => {
+              await handleStreamEnd(state, onChunk, onEnd, resolve, markSaved);
+            });
           });
 
-          ollamaRes.on("end", async () => {
-            await handleStreamEnd(state, onChunk, onEnd, resolve, markSaved);
+          state.ollamaReq.on("error", (err) => {
+            handleStreamError(state, err, onChunk, onEnd, reject, markSaved);
           });
+
+          state.ollamaReq.on("timeout", () => {
+            handleStreamTimeout(state, onChunk, onEnd, reject, markSaved);
+          });
+
+          state.ollamaReq.setTimeout(llmTimeout);
+
+          state.ollamaReq.write(
+            JSON.stringify({
+              model: chatModel,
+              messages: [{ role: "user", content: prompt }],
+              stream: true,
+              think: true,
+            }),
+          );
+
+          state.ollamaReq.end();
         });
-
-        state.ollamaReq.on("error", (err) => {
-          handleStreamError(state, err, onChunk, onEnd, reject, markSaved);
-        });
-
-        state.ollamaReq.on("timeout", () => {
-          handleStreamTimeout(state, onChunk, onEnd, reject, markSaved);
-        });
-
-        state.ollamaReq.setTimeout(llmTimeout);
-
-        state.ollamaReq.write(
-          JSON.stringify({
-            model: chatModel,
-            messages: [{ role: "user", content: prompt }],
-            stream: true,
-            think: true,
-          }),
-        );
-
-        state.ollamaReq.end();
-      });
+      } catch (error) {
+        logger.error('chatService.askStream error:', error);
+        if (onChunk) {
+          onChunk(JSON.stringify({ code: 500, msg: error.message || '处理请求时发生错误', data: null }));
+        }
+        if (onEnd) onEnd();
+        throw error;
+      }
     })();
 
     return { promise, cancel: () => cancel?.() };
